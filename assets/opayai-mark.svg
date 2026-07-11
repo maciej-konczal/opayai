@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 96" fill="none" role="img" aria-label="opayai">
+  <title>opayai mark</title>
+  <!-- ink ring inherits surrounding text color; green ring is the fixed accent -->
+  <circle cx="50" cy="48" r="30" stroke="currentColor" stroke-width="7"/>
+  <circle cx="82" cy="48" r="30" stroke="#00B368" stroke-width="7"/>
+</svg>
