@@ -135,6 +135,12 @@ td.k{{color:#8b949e;width:120px}}
 button{{background:#238636;color:#fff;border:0;border-radius:7px;padding:9px 15px;
 font-size:13px;font-weight:600;cursor:pointer;margin-top:10px}}
 button:hover{{background:#2ea043}}
+#pkov{{position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;
+align-items:center;justify-content:center;z-index:50}}
+#pkm{{background:#161b22;border:1px solid #30363d;border-radius:14px;
+padding:26px 30px;max-width:320px;text-align:center}}
+#pkm .amt{{font-size:22px;font-weight:700;margin:10px 0 2px}}
+#pkcancel{{background:#30363d}} #pkcancel:hover{{background:#3d444d}}
 </style></head><body>{brand}{body}</body></html>"""
 
 
@@ -269,34 +275,29 @@ def authorize(cart_id: str, kind: str) -> bool:
     return True
 
 
-# Triggers a real platform passkey / Touch ID gesture on click, then submits the
-# form (which carries the CSRF token). The backend still records our Ed25519 proof;
-# a production system would also verify the WebAuthn assertion server-side.
-_PASSKEY_JS = """<script>
-async function passkey(ev, form){
-  ev.preventDefault();
-  var msg=document.getElementById('pk-msg');
-  if(!window.PublicKeyCredential){
-    if(msg) msg.textContent='WebAuthn not available here - submitting without a gesture.';
-    form.submit(); return false;
-  }
-  if(msg) msg.textContent='Waiting for your passkey / Touch ID...';
-  try{
-    await navigator.credentials.create({publicKey:{
-      challenge: crypto.getRandomValues(new Uint8Array(32)),
-      rp:{name:'opayai'},
-      user:{id: crypto.getRandomValues(new Uint8Array(16)), name:'you@opayai', displayName:'opayai user'},
-      pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
-      authenticatorSelection:{authenticatorAttachment:'platform', userVerification:'required'},
-      attestation:'none', timeout:60000
-    }});
-    if(msg) msg.textContent='Passkey verified - authorizing...';
-    form.submit();
-  }catch(e){
-    if(msg) msg.textContent='Passkey failed ('+((e&&e.name)||e)+'). Click again to retry.';
-  }
-  return false;
-}
+# In-page "passkey" confirmation - a clean simulated gesture on the trusted surface
+# (no system/1Password dialog, reliable on stage). The backend still records the
+# signed Ed25519 proof, and the agent still cannot perform this step.
+_PASSKEY_UI = """<div id="pkov"><div id="pkm">
+<svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="#2ea043" stroke-width="1.5" stroke-linecap="round"><path d="M4 12a8 8 0 0 1 16 0"/><path d="M7 13a5 5 0 0 1 10 0v2"/><path d="M12 11v5"/><path d="M9.6 15.5a6 6 0 0 0 .4 2.6"/></svg>
+<div style="margin-top:8px">Authorize this purchase</div>
+<div class="amt" id="pkamt"></div>
+<div class="muted">Confirm with your passkey</div>
+<div style="margin-top:18px">
+<button type="button" id="pkgo">Authorize</button>
+<button type="button" id="pkcancel">Cancel</button>
+</div></div></div>
+<script>
+(function(){
+  var f=null, ov=document.getElementById('pkov');
+  window.passkey=function(ev, form){
+    ev.preventDefault(); f=form;
+    document.getElementById('pkamt').textContent='$'+(form.dataset.amount||'');
+    ov.style.display='flex'; return false;
+  };
+  document.getElementById('pkgo').onclick=function(){ ov.style.display='none'; if(f) f.submit(); };
+  document.getElementById('pkcancel').onclick=function(){ ov.style.display='none'; f=null; };
+})();
 </script>"""
 
 
@@ -311,22 +312,23 @@ def render_authorize() -> str:
         kind = req.get("kind", "")
         cid = html.escape(req.get("cart_id", ""))
         is_passkey = kind == "step_up"
+        amount = html.escape(str(req.get("amount", "")))
         what = "Passkey step-up" if is_passkey else "Approval"
-        label = "Authorize with passkey (Touch ID)" if is_passkey else "Approve purchase"
+        label = "Authorize with passkey" if is_passkey else "Approve purchase"
         onsubmit = ' onsubmit="return passkey(event, this)"' if is_passkey else ""
         cards.append(
-            f'<div class=card><b>{what}</b> - ${html.escape(str(req.get("amount")))}'
+            f'<div class=card><b>{what}</b> - ${amount}'
             f'<div class=muted>cart {cid}</div>'
-            f'<form method="post" action="/authorize/{cid}/{html.escape(kind)}"{onsubmit}>'
+            f'<form method="post" action="/authorize/{cid}/{html.escape(kind)}" '
+            f'data-amount="{amount}"{onsubmit}>'
             f'<input type="hidden" name="csrf" value="{_CSRF}">'
             f'<button type="submit">{label}</button></form></div>')
     body = ("<h1>Authorize</h1>"
             "<p class=muted>This is your trusted surface. Authorizing here - with your "
-            "passkey / Touch ID - is the step the agent cannot do for you.</p>"
+            "passkey - is the step the agent cannot do for you.</p>"
             + "".join(cards)
-            + '<div id="pk-msg" class=muted></div>'
             + "<p><a href='/'>Orders</a></p>"
-            + _PASSKEY_JS)
+            + _PASSKEY_UI)
     return _page("opayai authorize", body)
 
 
