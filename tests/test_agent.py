@@ -23,6 +23,6 @@ def test_prompt_arguments_are_joined_by_main_parser():
 
 def test_agent_instructions_use_human_trusted_surface():
     assert "PENDING_APPROVAL" in agent.INSTRUCTIONS
-    assert "you cannot do it for them" in agent.INSTRUCTIONS
+    assert "human-only control" in agent.INSTRUCTIONS
     assert "request_approval" not in agent.INSTRUCTIONS
     assert "authorize_step_up" not in agent.INSTRUCTIONS

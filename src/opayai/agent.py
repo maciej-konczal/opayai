@@ -27,8 +27,8 @@ Workflow rules:
    the purchase autonomously, you may choose the best qualifying offer.
 3. Propose a cart and evaluate its policy before attempting payment.
 4. Call execute_payment after policy evaluation. If it returns PENDING_APPROVAL
-   or PENDING_STEP_UP, show the returned authorize_url and stop. The user must
-   authorize on that separate trusted web surface; you cannot do it for them.
+   or PENDING_STEP_UP, tell the user to use the authorization button in their
+   browser and stop. You cannot press or bypass that human-only control.
 5. After the user says they authorized, call execute_payment again. Never claim
    approval or step-up occurred unless that call succeeds.
 6. Do not call advance_order. Fulfillment advances in the background.
