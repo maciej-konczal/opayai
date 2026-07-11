@@ -89,6 +89,39 @@ Run it as a server any MCP host can drive:
 Same server also works in Claude Desktop / VS Code / Claude Code - that is the
 generality point: one server, many hosts.
 
+### Run with the standalone OpenAI agent (no Cursor)
+
+The local agent host starts the same MCP server as a subprocess and lets an
+OpenAI model drive its tools. Keep the API key in your shell, not in this repo:
+
+```bash
+export OPENAI_API_KEY="your-key"
+./.venv/bin/python -m opayai.agent
+```
+
+You can also supply the first request directly:
+
+```bash
+./.venv/bin/python -m opayai.agent \
+  "buy a monitor under $300 with free returns for my MacBook"
+```
+
+The default model is `gpt-5.4-mini`. Override it with
+`OPAYAI_OPENAI_MODEL` if needed. Keep the terminal session open when the agent
+asks you to choose an offer or approve a purchase; your next message continues
+the same MCP session.
+
+For the same agent in a browser, run:
+
+```bash
+export OPENAI_API_KEY="your-key"
+./.venv/bin/python -m opayai.browser
+```
+
+Then open http://127.0.0.1:8080. This page is the MCP host: keep its terminal
+process running while you use the browser. It preserves one conversation and one
+local MCP workflow session until the process stops.
+
 ## 5. Quickstart C - the web status site + live logs
 
 The server writes every event to a log; the web site reads that same log and
