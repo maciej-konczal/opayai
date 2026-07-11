@@ -33,7 +33,7 @@ so you never need to activate it.)
 
 ```bash
 ./.venv/bin/pytest -q
-# 42 passed
+# 47 passed
 ```
 
 ## 3. Quickstart A - the CLI demo (fastest way to see it)
