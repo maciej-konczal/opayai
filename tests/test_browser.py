@@ -1,7 +1,7 @@
 import anyio
 import httpx
 
-from opayai.browser import create_app
+from opayai.browser import create_app, trusted_surface_url
 
 
 class FakeConversation:
@@ -40,3 +40,8 @@ def test_chat_rejects_empty_message():
 
     response = anyio.run(request)
     assert response.status_code == 400
+
+
+def test_trusted_surface_url_can_be_overridden(monkeypatch):
+    monkeypatch.setenv("OPAYAI_WEB_BASE", "http://127.0.0.1:9000/")
+    assert trusted_surface_url() == "http://127.0.0.1:9000"

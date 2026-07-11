@@ -1,7 +1,9 @@
 """Minimal browser host for the OpenAI agent and local opayai MCP server."""
 from __future__ import annotations
 
+import asyncio
 import os
+import sys
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -43,6 +45,8 @@ PAGE = """<!doctype html>
 <body>
   <h1>opayai</h1>
   <p class="muted">Local OpenAI agent driving the existing MCP purchase workflow.</p>
+  <p><a id="authorize" href="http://127.0.0.1:8000/authorize" target="_blank"
+    rel="noopener">Trusted authorization surface</a></p>
   <div id="status">Connecting…</div>
   <main id="chat"></main>
   <form id="form">
@@ -56,6 +60,7 @@ PAGE = """<!doctype html>
     const input = document.querySelector('#message');
     const button = document.querySelector('#send');
     const status = document.querySelector('#status');
+    const authorize = document.querySelector('#authorize');
 
     function addMessage(text, kind) {
       const box = document.createElement('div');
@@ -78,8 +83,9 @@ PAGE = """<!doctype html>
     }
 
     fetch('/api/health').then(r => r.json()).then(data => {
+      authorize.href = data.authorize_url;
       status.textContent = data.api_key
-        ? `Ready · ${data.model} · 14 local MCP tools`
+        ? `Ready · ${data.model} · 12 local MCP tools`
         : 'OPENAI_API_KEY is not set. Restart the app after exporting it.';
     }).catch(() => status.textContent = 'Local agent is unavailable.');
 
@@ -123,6 +129,7 @@ async def health(_: Request) -> JSONResponse:
         "ok": True,
         "api_key": bool(os.environ.get("OPENAI_API_KEY")),
         "model": model_name(),
+        "authorize_url": trusted_surface_url() + "/authorize",
     })
 
 
@@ -143,7 +150,39 @@ async def chat(request: Request) -> JSONResponse:
     return JSONResponse({"reply": reply})
 
 
-def create_app(conversation=None) -> Starlette:
+def trusted_surface_url() -> str:
+    return os.environ.get("OPAYAI_WEB_BASE", "http://127.0.0.1:8000").rstrip("/")
+
+
+@asynccontextmanager
+async def run_trusted_surface():
+    """Run the teammate-owned authorization/status site beside the agent host."""
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "opayai.web",
+        env=server_params()["env"],
+        start_new_session=True,
+    )
+    await asyncio.sleep(0.2)
+    if process.returncode is not None:
+        raise RuntimeError(
+            "The trusted authorization surface could not start. "
+            f"Port {os.environ.get('OPAYAI_WEB_PORT', '8000')} may already be in use."
+        )
+    try:
+        yield
+    finally:
+        if process.returncode is None:
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=3)
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+
+
+def create_app(conversation=None, start_trusted_surface: bool = True) -> Starlette:
     if conversation is not None:
         app = Starlette(routes=[
             Route("/", homepage),
@@ -155,13 +194,15 @@ def create_app(conversation=None) -> Starlette:
 
     @asynccontextmanager
     async def lifespan(app: Starlette):
-        async with MCPServerStdio(
-            name="opayai local server",
-            params=server_params(),
-            cache_tools_list=True,
-        ) as server:
-            app.state.conversation = AgentConversation(build_agent(server))
-            yield
+        surface_context = run_trusted_surface() if start_trusted_surface else _noop()
+        async with surface_context:
+            async with MCPServerStdio(
+                name="opayai local server",
+                params=server_params(),
+                cache_tools_list=True,
+            ) as server:
+                app.state.conversation = AgentConversation(build_agent(server))
+                yield
 
     return Starlette(
         routes=[
@@ -171,6 +212,11 @@ def create_app(conversation=None) -> Starlette:
         ],
         lifespan=lifespan,
     )
+
+
+@asynccontextmanager
+async def _noop():
+    yield
 
 
 app = create_app()

@@ -19,3 +19,10 @@ def test_model_can_be_overridden(monkeypatch):
 def test_prompt_arguments_are_joined_by_main_parser():
     args = agent.parse_args(["buy", "a", "monitor"])
     assert args.prompt == ["buy", "a", "monitor"]
+
+
+def test_agent_instructions_use_human_trusted_surface():
+    assert "PENDING_APPROVAL" in agent.INSTRUCTIONS
+    assert "you cannot do it for them" in agent.INSTRUCTIONS
+    assert "request_approval" not in agent.INSTRUCTIONS
+    assert "authorize_step_up" not in agent.INSTRUCTIONS

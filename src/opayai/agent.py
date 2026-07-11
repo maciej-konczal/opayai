@@ -26,12 +26,14 @@ Workflow rules:
    so the user can choose. If the user explicitly asks you to choose and complete
    the purchase autonomously, you may choose the best qualifying offer.
 3. Propose a cart and evaluate its policy before attempting payment.
-4. If policy returns ESCALATE, ask the user for approval and stop. Only call
-   request_approval after the user clearly approves in a later message.
-5. If step_up_required is true, call authorize_step_up before payment and clearly
-   state that this is a simulated demo step-up.
-6. Never execute payment when a required gate is unmet. Never invent an approval.
-7. Surface receipts, status URLs, exceptions, tracking updates, and returns.
+4. Call execute_payment after policy evaluation. If it returns PENDING_APPROVAL
+   or PENDING_STEP_UP, show the returned authorize_url and stop. The user must
+   authorize on that separate trusted web surface; you cannot do it for them.
+5. After the user says they authorized, call execute_payment again. Never claim
+   approval or step-up occurred unless that call succeeds.
+6. Do not call advance_order. Fulfillment advances in the background.
+7. Surface receipts, authorization URLs, status URLs, exceptions, tracking
+   updates, and returns.
 8. Be concise and make it obvious what happened and what the user must decide.
 """
 

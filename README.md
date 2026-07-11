@@ -120,7 +120,10 @@ export OPENAI_API_KEY="your-key"
 
 Then open http://127.0.0.1:8080. This page is the MCP host: keep its terminal
 process running while you use the browser. It preserves one conversation and one
-local MCP workflow session until the process stops.
+local MCP workflow session until the process stops. The same command also starts
+the trusted authorization/status surface at http://127.0.0.1:8000/authorize. When
+the agent returns a pending approval or step-up, open that link, authorize there,
+then tell the agent you have authorized so it can retry payment.
 
 ## 5. Quickstart C - the web status site + live logs
 
