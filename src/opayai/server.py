@@ -199,7 +199,17 @@ def execute_payment(cart_id: str) -> dict:
         SESSION["decisions"][cart_id] = dec
         if dec.result == "REJECT":
             raise ValueError("policy rejected this cart")
-        if dec.result == "ESCALATE":
+        # The standalone browser host opts into an explicit human confirmation
+        # for otherwise auto-approved carts. A step-up is already a stronger
+        # human authorization, so it replaces the basic confirmation in that case.
+        approval_required = (
+            dec.result == "ESCALATE"
+            or (
+                os.environ.get("OPAYAI_REQUIRE_APPROVAL", "0") == "1"
+                and not dec.step_up_required
+            )
+        )
+        if approval_required:
             pending = _ensure_authorization(cart, "approval")
             if pending is not None:
                 return pending
@@ -208,7 +218,7 @@ def execute_payment(cart_id: str) -> dict:
             if pending is not None:
                 return pending
         # gates satisfied by human-issued proofs - record them on the trail, then pay
-        if dec.result == "ESCALATE":
+        if approval_required:
             bus.publish("approval.recorded", "user",
                         {"cart_id": cart_id, "approved": True,
                          "proof_id": authstore.read_proof(cart_id, "approval")["id"]},

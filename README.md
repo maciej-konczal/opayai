@@ -121,9 +121,11 @@ export OPENAI_API_KEY="your-key"
 Then open http://127.0.0.1:8080. This page is the MCP host: keep its terminal
 process running while you use the browser. It preserves one conversation and one
 local MCP workflow session until the process stops. Approval and passkey step-up
-buttons appear directly on this page when needed; clicking one records the human
-authorization and automatically asks the agent to retry payment. Orders, profiles,
-receipts, and audit trails are also linked from the same local site.
+buttons appear directly on this page before every browser purchase; clicking one
+records the human authorization and automatically asks the agent to retry payment.
+Each browser run uses a fresh proof store, so an earlier demo authorization cannot
+approve a later cart. Orders, profiles, receipts, and audit trails are also linked
+from the same local site.
 
 ## 5. Quickstart C - the web status site + live logs
 

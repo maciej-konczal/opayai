@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import tempfile
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -24,6 +25,7 @@ from opayai.web import (
 
 
 _CSRF_TOKEN = secrets.token_urlsafe(32)
+_AUTH_STORE_TEMP: tempfile.TemporaryDirectory | None = None
 
 
 PAGE = """<!doctype html>
@@ -257,7 +259,16 @@ def browser_base_url() -> str:
 def browser_server_params() -> dict:
     params = server_params()
     params["env"]["OPAYAI_WEB_BASE"] = browser_base_url()
+    params["env"]["OPAYAI_REQUIRE_APPROVAL"] = "1"
     return params
+
+
+def configure_browser_session() -> None:
+    """Use a fresh proof store so authorization never leaks between demo runs."""
+    global _AUTH_STORE_TEMP
+    if "OPAYAI_AUTH_STORE" not in os.environ:
+        _AUTH_STORE_TEMP = tempfile.TemporaryDirectory(prefix="opayai-browser-auth-")
+        os.environ["OPAYAI_AUTH_STORE"] = _AUTH_STORE_TEMP.name
 
 
 def routes() -> list[Route]:
@@ -304,6 +315,7 @@ app = create_app()
 
 
 def main() -> None:
+    configure_browser_session()
     port = int(os.environ.get("OPAYAI_AGENT_PORT", "8080"))
     uvicorn.run(app, host="127.0.0.1", port=port)
 

@@ -47,6 +47,27 @@ def test_escalation_requires_web_approval():
     assert order["status"] == "PAID"
 
 
+def test_browser_mode_requires_approval_for_auto_approved_purchase(monkeypatch):
+    from opayai import web
+    monkeypatch.setenv("OPAYAI_REQUIRE_APPROVAL", "1")
+    intent = server.create_intent_mandate(
+        user_id="u_1", category="monitor", max_total="300",
+        hard_requirements=[], per_transaction="400", per_period="1000",
+        step_up_threshold="100000")
+    offers = server.search_offers(category="monitor", max_price="300")
+    budget_offer = next(o for o in offers if o["id"] == "of_2")
+    cart = server.propose_cart(intent_id=intent["id"],
+                               offer_ids=[budget_offer["id"]],
+                               rail="card", rationale="user picked")
+    decision = server.evaluate_policy(cart_id=cart["id"])
+    assert decision["result"] == "AUTO_APPROVE"
+
+    pending = server.execute_payment(cart_id=cart["id"])
+    assert pending["status"] == "PENDING_APPROVAL"
+    assert web.authorize(cart["id"], "approval") is True
+    assert server.execute_payment(cart_id=cart["id"])["status"] == "PAID"
+
+
 def test_suggest_offers_shortlist_then_buy_the_choice():
     intent = server.create_intent_mandate(
         user_id="u_1", category="monitor", max_total="300",

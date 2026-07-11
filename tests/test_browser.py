@@ -47,6 +47,7 @@ def test_browser_mcp_status_urls_use_the_single_browser_origin(monkeypatch):
     monkeypatch.setenv("OPAYAI_AGENT_PORT", "9000")
     params = browser_server_params()
     assert params["env"]["OPAYAI_WEB_BASE"] == "http://127.0.0.1:9000"
+    assert params["env"]["OPAYAI_REQUIRE_APPROVAL"] == "1"
 
 
 def test_human_can_authorize_pending_cart_from_browser():
