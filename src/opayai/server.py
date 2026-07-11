@@ -17,10 +17,11 @@ from opayai import recommend, notify, channels, authorization, fulfillment, auth
 _INSTRUCTIONS = """opayai is an agent-commerce backbone. Default flow:
 1. Call create_intent_mandate FIRST (constraints, spending limits). You do NOT need to
    ask the user for a passkey/step-up threshold - it defaults from their profile.
-2. When the user is shopping, call suggest_offers and PRESENT the ranked options
-   (with their match_reason) to the user, then WAIT for them to choose. Do NOT call
-   propose_cart or execute_payment until the user picks - UNLESS the user explicitly
-   says to buy autonomously (e.g. "just buy it", "complete the purchase", "pick the best").
+2. When the user is shopping, call suggest_offers and PRESENT the ranked options,
+   citing each option's match_reason AND its preferences (how it fits the user's
+   stated preferences), then WAIT for them to choose. Do NOT call propose_cart or
+   execute_payment until the user picks - UNLESS the user explicitly says to buy
+   autonomously (e.g. "just buy it", "complete the purchase", "pick the best").
 3. Always run evaluate_policy, then call execute_payment. If execute_payment returns a
    PENDING status, the cart needs the user's approval or passkey step-up: you CANNOT
    authorize on their behalf. Tell the user to authorize at the returned authorize_url
@@ -28,7 +29,11 @@ _INSTRUCTIONS = """opayai is an agent-commerce backbone. Default flow:
 4. Tell the user about any action-needed step (choose / approve / passkey) and surface
    the status_url returned by execute_payment/get_order so they can track the order.
 5. Do NOT call advance_order - fulfillment (shipped, then delivered) happens on its own
-   in the background, and the user is notified proactively. Just hand over the status_url."""
+   in the background, and the user is notified proactively. Just hand over the status_url.
+6. VOICE: if you are speaking, say the choose and authorize moments out loud - present
+   the ranked options and wait for the user to pick, and when execute_payment returns a
+   PENDING status tell them out loud that it needs their approval/passkey and to authorize
+   at the returned authorize_url, then call execute_payment again. Keep spoken replies short."""
 
 app = FastMCP("opayai-mcp", instructions=_INSTRUCTIONS)
 
@@ -100,18 +105,21 @@ def create_intent_mandate(user_id: str, category: str, max_total: str,
 def suggest_offers(intent_id: str, limit: int = 3) -> list[dict]:
     """Return a ranked shortlist of candidate offers for an intent, with reasons.
 
-    Each item has qualifies (bool) and match_reason (why it fits, or why not -
-    over budget / out of stock / missing free returns / not compatible). Present
-    this list to the user and let them pick which offer_id to buy BEFORE calling
-    propose_cart. This does not purchase anything. Searches the whole category
-    (including over-budget/out-of-stock options) so the user sees the tradeoffs.
+    Each item has: qualifies (bool); match_reason (why it fits, or why not - over
+    budget / out of stock / missing free returns / not compatible); and preferences
+    (a list of reasons it fits THIS user's stated preferences, e.g. "no dongles with
+    your MacBook", "you value quality"). When you present the shortlist, cite both -
+    why each option qualifies AND how it matches the user's preferences - so it is
+    clearly personalized. Let the user pick an offer_id before propose_cart. This
+    does not purchase anything; it searches the whole category (including
+    over-budget/out-of-stock options) so the user sees the tradeoffs.
     """
     intent = SESSION["intents"][intent_id]
     offers = data.search_offers(category=intent.constraint.category)
     for o in offers:
         SESSION["offers"][o.id] = o
     shortlist = recommend.suggest([o.model_dump(mode="json") for o in offers],
-                                  intent.constraint, limit)
+                                  intent.constraint, limit, persona=data.load_persona())
     bus.publish("suggestions.ready", "agent",
                 {"count": len(shortlist),
                  "qualifying": sum(1 for s in shortlist if s["qualifies"])},
@@ -320,11 +328,54 @@ def _install_event_logging() -> None:
     bus.subscribe(_sink)
 
 
+def _bearer_auth_asgi(inner_app, token: str | None):
+    """Wrap an ASGI app to require `Authorization: Bearer <token>` on HTTP requests.
+
+    When `token` is falsy, returns `inner_app` unchanged (no auth). Non-HTTP
+    scopes (lifespan, websocket) always pass through so the app's session-manager
+    lifespan still runs.
+    """
+    if not token:
+        return inner_app
+
+    expected = f"Bearer {token}".encode()
+
+    async def _app(scope, receive, send):
+        if scope["type"] == "http":
+            headers = dict(scope.get("headers") or [])
+            if headers.get(b"authorization") != expected:
+                await send({
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [(b"content-type", b"text/plain")],
+                })
+                await send({"type": "http.response.body", "body": b"unauthorized"})
+                return
+        await inner_app(scope, receive, send)
+
+    return _app
+
+
+def _http_asgi_app():
+    """Streamable-HTTP ASGI app for the MCP server, behind optional bearer auth."""
+    return _bearer_auth_asgi(app.streamable_http_app(), os.environ.get("OPAYAI_MCP_TOKEN"))
+
+
 def run() -> None:
     _install_event_logging()
     channels.install(bus)   # webhook = full event feed; desktop/email = action pings
     fulfillment.start()     # orders ship/deliver on a timer -> proactive notifications
-    app.run()
+    if os.environ.get("OPAYAI_TRANSPORT", "stdio") == "http":
+        import uvicorn
+        host = "0.0.0.0"
+        port = int(os.environ.get("OPAYAI_MCP_PORT", "8787"))
+        app.settings.host = host
+        app.settings.port = port
+        print(f"[opayai] serving MCP over streamable-http at http://{host}:{port}"
+              f"{app.settings.streamable_http_path}", file=sys.stderr, flush=True)
+        uvicorn.run(_http_asgi_app(), host=host, port=port, log_level="info")
+    else:
+        app.run()
 
 
 if __name__ == "__main__":

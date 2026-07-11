@@ -269,6 +269,32 @@ def authorize(cart_id: str, kind: str) -> bool:
     return True
 
 
+# Triggers a real platform passkey / Touch ID gesture on click, then submits the
+# form (which carries the CSRF token). The backend still records our Ed25519 proof;
+# a production system would also verify the WebAuthn assertion server-side.
+_PASSKEY_JS = """<script>
+async function passkey(ev, form){
+  ev.preventDefault();
+  var msg=document.getElementById('pk-msg');
+  if(!window.PublicKeyCredential){ form.submit(); return false; }
+  try{
+    await navigator.credentials.create({publicKey:{
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      rp:{name:'opayai'},
+      user:{id: crypto.getRandomValues(new Uint8Array(16)), name:'you@opayai', displayName:'opayai user'},
+      pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
+      authenticatorSelection:{userVerification:'required'}, timeout:60000
+    }});
+    if(msg) msg.textContent='Passkey verified - authorizing...';
+    form.submit();
+  }catch(e){
+    if(msg) msg.textContent='Passkey cancelled or unavailable - not authorized.';
+  }
+  return false;
+}
+</script>"""
+
+
 def render_authorize() -> str:
     pending = authstore.list_pending()
     if not pending:
@@ -279,18 +305,23 @@ def render_authorize() -> str:
     for req in pending:
         kind = req.get("kind", "")
         cid = html.escape(req.get("cart_id", ""))
-        what = "Passkey step-up" if kind == "step_up" else "Approval"
-        label = "Authorize with passkey" if kind == "step_up" else "Approve purchase"
+        is_passkey = kind == "step_up"
+        what = "Passkey step-up" if is_passkey else "Approval"
+        label = "Authorize with passkey (Touch ID)" if is_passkey else "Approve purchase"
+        onsubmit = ' onsubmit="return passkey(event, this)"' if is_passkey else ""
         cards.append(
             f'<div class=card><b>{what}</b> - ${html.escape(str(req.get("amount")))}'
             f'<div class=muted>cart {cid}</div>'
-            f'<form method="post" action="/authorize/{cid}/{html.escape(kind)}">'
+            f'<form method="post" action="/authorize/{cid}/{html.escape(kind)}"{onsubmit}>'
             f'<input type="hidden" name="csrf" value="{_CSRF}">'
             f'<button type="submit">{label}</button></form></div>')
     body = ("<h1>Authorize</h1>"
-            "<p class=muted>This is your trusted surface. Authorizing here is the step "
-            "the agent cannot do for you.</p>" + "".join(cards)
-            + "<p><a href='/'>Orders</a></p>")
+            "<p class=muted>This is your trusted surface. Authorizing here - with your "
+            "passkey / Touch ID - is the step the agent cannot do for you.</p>"
+            + "".join(cards)
+            + '<div id="pk-msg" class=muted></div>'
+            + "<p><a href='/'>Orders</a></p>"
+            + _PASSKEY_JS)
     return _page("opayai authorize", body)
 
 

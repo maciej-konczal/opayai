@@ -7,8 +7,8 @@ bus, so the webhook/notifications fire on their own.
 
 Env:
   OPAYAI_FULFILLMENT=0     disable (default on)
-  OPAYAI_SHIP_SECONDS      seconds after order placed -> SHIPPED (default 20)
-  OPAYAI_DELIVER_SECONDS   seconds after order placed -> DELIVERED (default 40)
+  OPAYAI_SHIP_SECONDS      seconds after order placed -> SHIPPED (default 5)
+  OPAYAI_DELIVER_SECONDS   seconds after order placed -> DELIVERED (default 12)
 """
 from __future__ import annotations
 import os
@@ -37,12 +37,12 @@ def advance_due(store, now: datetime, ship_secs: float, deliver_secs: float) -> 
             pass
 
 
-def start(interval: float = 2.0) -> None:
+def start(interval: float = 1.0) -> None:
     if os.environ.get("OPAYAI_FULFILLMENT", "1") == "0":
         return
     from opayai.orders import store
-    ship = float(os.environ.get("OPAYAI_SHIP_SECONDS", "20"))
-    deliver = float(os.environ.get("OPAYAI_DELIVER_SECONDS", "40"))
+    ship = float(os.environ.get("OPAYAI_SHIP_SECONDS", "5"))
+    deliver = float(os.environ.get("OPAYAI_DELIVER_SECONDS", "12"))
 
     def loop() -> None:
         while True:

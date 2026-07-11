@@ -9,11 +9,14 @@ same mapping feeds the MCP tool, the web inbox, and the desktop ping.
 from __future__ import annotations
 
 
-def _n(title: str, body: str, action: bool, event: dict) -> dict:
+def _n(title: str, body: str, action: bool, event: dict, push: bool = False) -> dict:
     return {
         "title": title, "body": body,
         "level": "action_required" if action else "update",
         "needs_action": action,
+        # push -> also fire the desktop/email channels (action items always push;
+        # some updates, like "delivered", are push-worthy too).
+        "push": action or push,
         "seq": event.get("seq"), "ts": event.get("ts"),
         "mandate_ref": event.get("mandate_ref"), "source_event": event.get("type"),
     }
@@ -55,8 +58,9 @@ def notification_for(event: dict) -> dict | None:
     if t == "order.created":
         return _n("Order confirmed", "Your order has been placed.", False, event)
     if t == "order.advanced":
-        return _n(f"Order {str(p.get('status', '')).lower()}",
-                  f"Your order is now {p.get('status')}.", False, event)
+        status = str(p.get("status", ""))
+        return _n(f"Order {status.lower()}", f"Your order is now {status}.",
+                  False, event, push=(status == "DELIVERED"))
     if t == "order.return_requested":
         return _n("Return filed", "Your return request was submitted.", False, event)
     if t == "order.cancelled":

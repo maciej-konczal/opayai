@@ -81,6 +81,21 @@ def test_webhook_receives_full_event_plus_notification(monkeypatch):
     assert got["notification"]["needs_action"] is True       # + the action notification
 
 
+def test_delivered_update_pings_but_shipped_does_not(monkeypatch):
+    rec = _Rec("desktop")
+    monkeypatch.setattr(channels, "ping_channels", lambda: [rec])
+    monkeypatch.setattr(channels, "event_webhook", lambda: None)
+    bus = _FakeBus()
+    channels.install(bus)
+    bus.cb(_FakeEvent({"type": "order.advanced", "actor": "merchant",
+                       "mandate_ref": "im_1", "payload": {"order_id": "o1", "status": "DELIVERED"}}))
+    assert len(rec.got) == 1 and rec.got[0]["source_event"] == "order.advanced"
+    rec.got.clear()
+    bus.cb(_FakeEvent({"type": "order.advanced", "actor": "merchant",
+                       "mandate_ref": "im_1", "payload": {"order_id": "o1", "status": "SHIPPED"}}))
+    assert rec.got == []   # a shipped update is not push-worthy
+
+
 def test_webhook_receives_events_without_a_notification(monkeypatch):
     rec = _Rec("webhook")
     monkeypatch.setattr(channels, "event_webhook", lambda: rec)
