@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "opayai": {
+      "command": "/Users/maciejkonczal/Documents/Projects/opayai/.venv/bin/python",
+      "args": ["-m", "opayai.server"]
+    }
+  }
+}
