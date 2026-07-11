@@ -15,7 +15,8 @@ from opayai.events import bus
 from opayai import recommend, notify, channels, authorization, fulfillment, authstore
 
 _INSTRUCTIONS = """opayai is an agent-commerce backbone. Default flow:
-1. Call create_intent_mandate FIRST (constraints, spending limits, optional step_up_threshold).
+1. Call create_intent_mandate FIRST (constraints, spending limits). You do NOT need to
+   ask the user for a passkey/step-up threshold - it defaults from their profile.
 2. When the user is shopping, call suggest_offers and PRESENT the ranked options
    (with their match_reason) to the user, then WAIT for them to choose. Do NOT call
    propose_cart or execute_payment until the user picks - UNLESS the user explicitly
@@ -77,8 +78,12 @@ def create_intent_mandate(user_id: str, category: str, max_total: str,
     "arrives_by:YYYY-MM-DD". `max_total`, `per_transaction`, `per_period` are
     decimal strings. `step_up_threshold` (optional decimal string): carts at or
     above it need the user's fresh passkey authorization on the web trusted surface
-    before execute_payment will pay. Returns the signed mandate; use its `id` later.
+    before execute_payment will pay. If omitted, it defaults to the user's configured
+    threshold from their profile - the user does NOT need to state it each time.
+    Returns the signed mandate; use its `id` later.
     """
+    if step_up_threshold is None:
+        step_up_threshold = data.load_persona().get("defaults", {}).get("step_up_over", {}).get("amount")
     threshold = Money(amount=Decimal(step_up_threshold)) if step_up_threshold else None
     im = _create_intent(
         user_id,

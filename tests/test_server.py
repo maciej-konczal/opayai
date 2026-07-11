@@ -10,7 +10,7 @@ def test_end_to_end_happy_path():
     intent = server.create_intent_mandate(
         user_id="u_1", category="monitor", max_total="300",
         hard_requirements=["free_returns", "compat:macbook", "arrives_by:2026-07-12"],
-        per_transaction="400", per_period="1000")
+        per_transaction="400", per_period="1000", step_up_threshold="100000")
     offers = server.search_offers(category="monitor", max_price="300")
     picked = [o["id"] for o in offers if o["free_returns"]
               and "macbook" in o["specs"].get("compat", [])
@@ -30,7 +30,8 @@ def test_escalation_requires_web_approval():
     from opayai import web
     intent = server.create_intent_mandate(
         user_id="u_1", category="monitor", max_total="400",
-        hard_requirements=[], per_transaction="400", per_period="200")
+        hard_requirements=[], per_transaction="400", per_period="200",
+        step_up_threshold="100000")
     offers = server.search_offers(category="monitor", max_price="400")
     picked = [offers[0]["id"]]
     cart = server.propose_cart(intent_id=intent["id"], offer_ids=picked,
@@ -50,7 +51,7 @@ def test_suggest_offers_shortlist_then_buy_the_choice():
     intent = server.create_intent_mandate(
         user_id="u_1", category="monitor", max_total="300",
         hard_requirements=["free_returns", "compat:macbook"],
-        per_transaction="400", per_period="1000")
+        per_transaction="400", per_period="1000", step_up_threshold="100000")
     shortlist = server.suggest_offers(intent_id=intent["id"], limit=3)
     # top suggestion qualifies; at least one is disqualified with a reason
     assert shortlist[0]["qualifies"] is True
@@ -67,7 +68,7 @@ def _pay_a_monitor(per_period="1000"):
     intent = server.create_intent_mandate(
         user_id="u_1", category="monitor", max_total="300",
         hard_requirements=["free_returns", "compat:macbook", "arrives_by:2026-07-12"],
-        per_transaction="400", per_period=per_period)
+        per_transaction="400", per_period=per_period, step_up_threshold="100000")
     offers = server.search_offers(category="monitor", max_price="300")
     picked = [o["id"] for o in offers if o["free_returns"]
               and "macbook" in o["specs"].get("compat", [])
