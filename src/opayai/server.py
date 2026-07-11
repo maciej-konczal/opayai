@@ -32,11 +32,15 @@ reset_session()
 
 @app.tool()
 def search_offers(category: str | None = None, max_price: str | None = None) -> list[dict]:
-    """Search the catalog for agent-readable offers.
+    """Search the catalog for agent-readable offers (raw list).
 
     Returns structured offers (price, stock, delivery date, return policy, specs,
     rating) the agent can reason over. Call this after create_intent_mandate to
     find candidate products. `max_price` is a decimal string (e.g. "300").
+
+    If the user wants to SEE options and pick one (not buy autonomously), call
+    suggest_offers instead - it ranks candidates with a match_reason for the user
+    to choose from before propose_cart.
     """
     mp = Decimal(max_price) if max_price is not None else None
     offers = data.search_offers(category=category, max_price=mp)
