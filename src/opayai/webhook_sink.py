@@ -18,12 +18,17 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length) if length else b"{}"
         try:
-            n = json.loads(raw)
+            ev = json.loads(raw)
         except json.JSONDecodeError:
-            n = {"title": "?", "body": raw.decode(errors="replace")}
-        flag = "\U0001f514 ACTION" if n.get("needs_action") else "   update"
+            ev = {"type": "?", "raw": raw.decode(errors="replace")}
         ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-        print(f"[{ts}] {flag}  {n.get('title', '?')} - {n.get('body', '')}", flush=True)
+        note = ev.get("notification")
+        if note and note.get("needs_action"):
+            print(f"[{ts}] \U0001f514 ACTION  {note['title']} - {note['body']}   "
+                  f"(from {ev.get('type')})", flush=True)
+        else:
+            print(f"[{ts}]    event  #{ev.get('seq', '')} {ev.get('type', '?')} "
+                  f"[{ev.get('actor', '')}] {ev.get('payload', {})}", flush=True)
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"ok")

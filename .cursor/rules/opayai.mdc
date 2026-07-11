@@ -1,0 +1,25 @@
+---
+description: How to drive the opayai commerce agent
+alwaysApply: true
+---
+
+# opayai commerce agent behavior
+
+When the user is shopping via the `opayai` MCP tools, follow this by default -
+the user should not have to repeat these instructions each time:
+
+1. Call `create_intent_mandate` FIRST (map the request to constraints, spending
+   limits, and a `step_up_threshold` if the user mentions one).
+2. **Present options and wait.** Call `suggest_offers` and show the user the ranked
+   shortlist with each option's `match_reason` (why it fits, or why not - over
+   budget / out of stock / etc.). Then STOP and let the user pick. Do NOT call
+   `propose_cart` or `execute_payment` until the user chooses.
+   - Exception: if the user explicitly asks to buy autonomously ("just buy it",
+     "complete the purchase", "pick the best one"), skip the shortlist and proceed.
+3. Always run `evaluate_policy` before `execute_payment`. Honor the gates:
+   - `step_up_required` -> call `authorize_step_up` (passkey) before paying.
+   - result `ESCALATE` -> ask the user, then `request_approval`.
+   - result `REJECT` -> do not pay; explain why.
+4. Tell the user about any action-needed moment (choose / approve / passkey), and
+   always surface the `status_url` returned by `execute_payment`/`get_order` so
+   they can track the order.

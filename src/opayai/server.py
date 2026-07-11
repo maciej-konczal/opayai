@@ -13,7 +13,19 @@ from opayai.orders import store as order_store
 from opayai.events import bus
 from opayai import stepup, recommend, notify, channels
 
-app = FastMCP("opayai-mcp")
+_INSTRUCTIONS = """opayai is an agent-commerce backbone. Default flow:
+1. Call create_intent_mandate FIRST (constraints, spending limits, optional step_up_threshold).
+2. When the user is shopping, call suggest_offers and PRESENT the ranked options
+   (with their match_reason) to the user, then WAIT for them to choose. Do NOT call
+   propose_cart or execute_payment until the user picks - UNLESS the user explicitly
+   says to buy autonomously (e.g. "just buy it", "complete the purchase", "pick the best").
+3. Always run evaluate_policy before execute_payment. If it returns step_up_required,
+   call authorize_step_up (passkey). If the result is ESCALATE, ask the user, then
+   request_approval. Never call execute_payment while a gate is unmet.
+4. Tell the user about any action-needed step (choose / approve / passkey) and surface
+   the status_url returned by execute_payment/get_order so they can track the order."""
+
+app = FastMCP("opayai-mcp", instructions=_INSTRUCTIONS)
 
 SESSION: dict = {}
 
@@ -32,11 +44,15 @@ reset_session()
 
 @app.tool()
 def search_offers(category: str | None = None, max_price: str | None = None) -> list[dict]:
-    """Search the catalog for agent-readable offers.
+    """Search the catalog for agent-readable offers (raw list).
 
     Returns structured offers (price, stock, delivery date, return policy, specs,
     rating) the agent can reason over. Call this after create_intent_mandate to
     find candidate products. `max_price` is a decimal string (e.g. "300").
+
+    If the user wants to SEE options and pick one (not buy autonomously), call
+    suggest_offers instead - it ranks candidates with a match_reason for the user
+    to choose from before propose_cart.
     """
     mp = Decimal(max_price) if max_price is not None else None
     offers = data.search_offers(category=category, max_price=mp)
@@ -279,27 +295,9 @@ def _install_event_logging() -> None:
     bus.subscribe(_sink)
 
 
-def _install_notifications() -> None:
-    """Deliver a proactive ping to every enabled channel when action is needed.
-
-    The "pings you only when it needs input, approval, or a decision" behavior.
-    Channels (desktop / webhook / email) are env-driven; see opayai.channels.
-    """
-    active = channels.enabled_channels()
-
-    def _sink(event) -> None:
-        n = notify.notification_for(event.model_dump(mode="json"))
-        if not n or not n["needs_action"]:
-            return
-        print(f"[opayai] ACTION NEEDED: {n['title']} - {n['body']}", file=sys.stderr, flush=True)
-        channels.deliver(n, active)
-
-    bus.subscribe(_sink)
-
-
 def run() -> None:
     _install_event_logging()
-    _install_notifications()
+    channels.install(bus)   # webhook = full event feed; desktop/email = action pings
     app.run()
 
 

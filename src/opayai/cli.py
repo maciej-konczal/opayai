@@ -4,7 +4,7 @@ from typing import Callable
 import typer
 from rich.console import Console
 from rich.markup import escape
-from opayai import server, recommend, channels, notify
+from opayai import server, recommend, channels
 from opayai.data import load_persona
 from opayai.events import bus
 from opayai.front_door import parse_prompt
@@ -94,14 +94,7 @@ def main(prompt: str = typer.Argument(
     client = _maybe_client()
     console.print(f"[dim]front door: {'Claude' if client else 'offline heuristic'}[/dim]")
     bus.subscribe(_render)
-    # deliver proactive pings to any enabled channel (webhook / email / desktop)
-    _channels = channels.enabled_channels()
-
-    def _notify_sink(event):
-        n = notify.notification_for(event.model_dump(mode="json"))
-        if n and n["needs_action"]:
-            channels.deliver(n, _channels)
-    bus.subscribe(_notify_sink)
+    channels.install(bus)   # webhook = full event feed; desktop/email = action pings
     result = run_flow(prompt, approve=approve, do_return=do_return, client=client,
                       step_up_threshold=step_up)
     console.rule("[bold green]RESULT")
