@@ -75,7 +75,7 @@ Run it as a server any MCP host can drive:
 
 1. Open this folder as the Cursor workspace - Cursor auto-detects `.cursor/mcp.json`.
 2. Settings → MCP → toggle the **`opayai`** server on (or off/on to reload tools).
-   You should see 14 tools.
+   You should see 12 tools.
 3. In Agent chat, a plain prompt drives the whole flow (the tools describe
    themselves, so you do NOT need to spell out each call):
 
@@ -140,9 +140,7 @@ in pane 1 update live as you tell the agent to advance or return the order.
 | `suggest_offers` | ranked shortlist with match reasons (and why-not); user picks before `propose_cart` |
 | `propose_cart` | sign the specific cart the agent wants to buy |
 | `evaluate_policy` | AUTO_APPROVE / ESCALATE / REJECT + `step_up_required`, with a per-rule breakdown |
-| `request_approval` | record a yes/no for an escalated (over-limit) cart |
-| `authorize_step_up` | run the passkey ceremony for an over-threshold cart |
-| `execute_payment` | charge the rail and create the order (enforces all gates) |
+| `execute_payment` | pays if all gates are met; else returns a PENDING status with an `authorize_url` (the agent cannot self-authorize) |
 | `advance_order` | PAID → SHIPPED → DELIVERED |
 | `get_order` | current status + timeline (+ `status_url`) |
 | `cancel_order` | cancel before shipment |
@@ -158,10 +156,13 @@ in pane 1 update live as you tell the agent to advance or return the order.
 - **Policy engine (fail-closed).** Checks signature, hard requirements
   (`free_returns`, `compat:<tag>`, `arrives_by:YYYY-MM-DD`), budget, and spending
   limits. Unknown/typo'd requirements are REJECTED, not silently passed.
-- **Simulated trusted-surface step-up.** Carts at/above `step_up_threshold` require a
-  fresh, challenge-bound demo-device signature and a signed, expiring authorization
-  proof. Payment is refused until it verifies. Production would issue this proof
-  after a real WebAuthn user gesture on a separate trusted surface.
+- **Trusted-surface authorization (the agent can't self-authorize).** When a cart needs
+  the user's approval (ESCALATE) or passkey step-up, `execute_payment` returns a PENDING
+  status; the user must authorize on the **web page** (`/authorize`), which issues a
+  signed, expiring proof bound to that exact cart/amount. Only then does payment go
+  through. The web and MCP processes share this via a small on-disk auth store, so the
+  authorization genuinely comes from the human, not the agent. Production would issue the
+  same proof after a real WebAuthn gesture.
 - **Pluggable payment adapters.** Mock `ap2` and `card` adapters sit behind one
   `PaymentRail` interface. Adding a real AP2/PSP, x402, or Stripe adapter is the
   next integration step.
@@ -174,6 +175,7 @@ in pane 1 update live as you tell the agent to advance or return the order.
 | var | default | used by |
 |---|---|---|
 | `OPAYAI_EVENT_LOG` | `~/.opayai/events.jsonl` | server (writes), web (reads) |
+| `OPAYAI_AUTH_STORE` | `opayai-auth` next to the event log | shared approval/step-up proofs (server + web) |
 | `OPAYAI_WEB_PORT` | `8000` | web |
 | `OPAYAI_WEB_BASE` | `http://localhost:8000` | server (builds `status_url`) |
 | `ANTHROPIC_API_KEY` | unset | CLI front door: real Claude parse when set, offline heuristic otherwise |
@@ -237,7 +239,7 @@ src/opayai/
   stepup.py      simulated trusted-surface/passkey ceremony
   rails.py       PaymentRail interface + MockAP2Rail + MockCardRail
   orders.py      order lifecycle state machine (+ cancel/return)
-  server.py      the opayai-mcp server (14 tools)
+  server.py      the opayai-mcp server (12 tools)
   front_door.py  prompt -> Intent Mandate (Claude or offline heuristic)
   cli.py         CLI host + live renderer + demo
   web.py         read-only status site

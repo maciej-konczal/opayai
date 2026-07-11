@@ -46,18 +46,17 @@ def run_flow(prompt: str, approve: Callable[[dict, dict], bool],
     decision = server.evaluate_policy(cart_id=cart["id"])
     if decision["result"] == "REJECT":
         return {"intent": intent, "cart": cart, "decision": decision, "order": None}
-    if decision["result"] == "ESCALATE":
-        approved = approve(cart, decision)
-        server.request_approval(cart_id=cart["id"], approved=approved)
-        if not approved:
-            return {"intent": intent, "cart": cart, "decision": decision, "order": None}
-    if decision.get("step_up_required"):
-        console.print(f"[yellow]STEP-UP[/yellow] over threshold - authorizing with passkey "
-                      f"(total {cart['total']['amount']})")
-        auth = server.authorize_step_up(cart_id=cart["id"])
-        if not auth.get("authorized"):
-            return {"intent": intent, "cart": cart, "decision": decision, "order": None}
     order = server.execute_payment(cart_id=cart["id"])
+    # execute_payment returns PENDING when the cart needs the user's approval or
+    # passkey; the terminal is the trusted surface for the CLI demo.
+    while isinstance(order, dict) and str(order.get("status", "")).startswith("PENDING"):
+        kind = order.get("kind")
+        console.print(f"[yellow]AUTHORIZATION NEEDED[/yellow] ({kind}) - {order.get('message', '')}")
+        if not approve(cart, decision):
+            return {"intent": intent, "cart": cart, "decision": decision, "order": None}
+        from opayai import web
+        web.authorize(cart["id"], kind)
+        order = server.execute_payment(cart_id=cart["id"])
     receipt_ref = order["receipt"]["rail_reference"]
     server.advance_order(order["id"])
     order = server.advance_order(order["id"])  # -> DELIVERED

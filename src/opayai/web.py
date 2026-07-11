@@ -13,7 +13,7 @@ import html
 import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from opayai import notify, data
+from opayai import notify, data, authstore, authorization
 
 
 def log_path() -> str:
@@ -116,6 +116,9 @@ td.k{{color:#8b949e;width:120px}}
 .note{{border:1px solid #21262d;background:#161b22;border-radius:8px;padding:9px 12px;margin:7px 0;font-size:13px}}
 .note.act{{border-color:#8a5a00;background:#221a08}}
 .note .t{{font-weight:640}} .note.act .t{{color:#f0b429}} .note .b{{color:#9aa4b2;margin-left:6px}}
+button{{background:#238636;color:#fff;border:0;border-radius:7px;padding:9px 15px;
+font-size:13px;font-weight:600;cursor:pointer;margin-top:10px}}
+button:hover{{background:#2ea043}}
 </style></head><body>{brand}{body}</body></html>"""
 
 
@@ -126,7 +129,7 @@ def _page(title: str, body: str) -> str:
 def render_index(events: list[dict]) -> str:
     orders = sorted(order_index(events).values(), key=lambda r: r.get("order_id", ""))
     if not orders:
-        body = ("<h1>Orders</h1><p><a href='/profile'>Your profile and context</a></p><p class=muted>No orders yet. Complete a "
+        body = ("<h1>Orders</h1><p><a href='/profile'>Your profile and context</a> &middot; <a href='/authorize'>Authorize</a></p><p class=muted>No orders yet. Complete a "
                 "purchase (via the agent or the CLI) and this refreshes automatically.</p>")
         return _page("opayai orders", body)
     rows = []
@@ -137,7 +140,7 @@ def render_index(events: list[dict]) -> str:
             f'<div class=card><a href="/order/{oid}"><b>{oid}</b></a> '
             f'<span class=badge style="background:{color}">{html.escape(str(r.get("status")))}</span>'
             f'<div class=muted>intent {html.escape(str(r.get("intent")))}</div></div>')
-    body = "<h1>Orders</h1><p><a href='/profile'>Your profile and context</a></p>" + "".join(rows)
+    body = "<h1>Orders</h1><p><a href='/profile'>Your profile and context</a> &middot; <a href='/authorize'>Authorize</a></p>" + "".join(rows)
     return _page("opayai orders", body)
 
 
@@ -236,6 +239,44 @@ def render_profile(events: list[dict]) -> str:
     return _page(f'{p.get("name")} - profile', body)
 
 
+def authorize(cart_id: str, kind: str) -> bool:
+    """The trusted-surface action: issue a signed proof for a pending request.
+
+    Only reachable from the web page (a human click), never from the agent.
+    """
+    req = authstore.read_pending(cart_id, kind)
+    if req is None:
+        return False
+    proof = authorization.issue_fields(kind, cart_id, req["intent_id"],
+                                       req["amount"], req["currency"])
+    authstore.write_proof(proof)
+    return True
+
+
+def render_authorize() -> str:
+    pending = authstore.list_pending()
+    if not pending:
+        body = ("<h1>Authorize</h1><p class=muted>Nothing is waiting for your "
+                "authorization right now.</p><p><a href='/'>Orders</a></p>")
+        return _page("opayai authorize", body)
+    cards = []
+    for req in pending:
+        kind = req.get("kind", "")
+        cid = html.escape(req.get("cart_id", ""))
+        what = "Passkey step-up" if kind == "step_up" else "Approval"
+        label = "Authorize with passkey" if kind == "step_up" else "Approve purchase"
+        cards.append(
+            f'<div class=card><b>{what}</b> - ${html.escape(str(req.get("amount")))}'
+            f'<div class=muted>cart {cid}</div>'
+            f'<form method="post" action="/authorize/{cid}/{html.escape(kind)}">'
+            f'<button type="submit">{label}</button></form></div>')
+    body = ("<h1>Authorize</h1>"
+            "<p class=muted>This is your trusted surface. Authorizing here is the step "
+            "the agent cannot do for you.</p>" + "".join(cards)
+            + "<p><a href='/'>Orders</a></p>")
+    return _page("opayai authorize", body)
+
+
 class _Handler(BaseHTTPRequestHandler):
     def _send(self, body: str) -> None:
         payload = body.encode()
@@ -250,10 +291,26 @@ class _Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0].rstrip("/")
         if path == "/profile":
             self._send(render_profile(events))
+        elif path == "/authorize":
+            self._send(render_authorize())
         elif path.startswith("/order/"):
             self._send(render_order(events, path[len("/order/"):]))
         else:
             self._send(render_index(events))
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length", 0))
+        if length:
+            self.rfile.read(length)
+        parts = self.path.split("?", 1)[0].rstrip("/").split("/")
+        if len(parts) == 4 and parts[1] == "authorize":
+            authorize(parts[2], parts[3])
+            self.send_response(303)
+            self.send_header("Location", "/authorize")
+            self.end_headers()
+            return
+        self.send_response(404)
+        self.end_headers()
 
     def log_message(self, *args) -> None:
         pass

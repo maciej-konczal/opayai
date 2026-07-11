@@ -26,7 +26,8 @@ def test_end_to_end_happy_path():
     assert "intent.created" in types and "payment.settled" in types
 
 
-def test_escalation_blocks_until_approval():
+def test_escalation_requires_web_approval():
+    from opayai import web
     intent = server.create_intent_mandate(
         user_id="u_1", category="monitor", max_total="400",
         hard_requirements=[], per_transaction="400", per_period="200")
@@ -36,13 +37,11 @@ def test_escalation_blocks_until_approval():
                                rail="card", rationale="pick")
     decision = server.evaluate_policy(cart_id=cart["id"])
     assert decision["result"] == "ESCALATE"
-    # paying an un-approved escalated cart is refused
-    try:
-        server.execute_payment(cart_id=cart["id"])
-        assert False
-    except ValueError:
-        assert True
-    server.request_approval(cart_id=cart["id"], approved=True)
+    # payment does not pay - it returns PENDING (the agent cannot self-authorize)
+    pending = server.execute_payment(cart_id=cart["id"])
+    assert pending["status"] == "PENDING_APPROVAL"
+    # the human authorizes on the web trusted surface, then payment succeeds
+    assert web.authorize(cart["id"], "approval") is True
     order = server.execute_payment(cart_id=cart["id"])
     assert order["status"] == "PAID"
 
@@ -112,7 +111,8 @@ def test_audit_trail_includes_order_lifecycle():
     assert "order.created" in types and "order.advanced" in types
 
 
-def test_step_up_blocks_payment_until_passkey():
+def test_step_up_requires_web_passkey():
+    from opayai import web
     intent = server.create_intent_mandate(
         user_id="u_1", category="monitor", max_total="300",
         hard_requirements=["free_returns", "compat:macbook"],
@@ -124,38 +124,32 @@ def test_step_up_blocks_payment_until_passkey():
                                rail="ap2", rationale="fit")
     dec = server.evaluate_policy(cart_id=cart["id"])
     assert dec["step_up_required"] is True
-    # payment refused before the passkey ceremony
-    try:
-        server.execute_payment(cart_id=cart["id"])
-        assert False
-    except ValueError:
-        assert True
-    auth = server.authorize_step_up(cart_id=cart["id"])
-    assert auth["authorized"] is True
+    # payment returns PENDING until the human authorizes on the trusted surface
+    pending = server.execute_payment(cart_id=cart["id"])
+    assert pending["status"] == "PENDING_STEP_UP"
+    assert web.authorize(cart["id"], "step_up") is True
     order = server.execute_payment(cart_id=cart["id"])
     assert order["status"] == "PAID"
     types = [e["type"] for e in server.get_audit_trail(mandate_ref=intent["id"])]
-    assert "stepup.authorized" in types
+    assert "authorization.pending" in types and "stepup.authorized" in types
 
 
-def test_declined_approval_revokes_previous_approval():
-    _intent, cart = _pay_a_monitor(per_period="200")
-    server.request_approval(cart_id=cart["id"], approved=True)
-    server.request_approval(cart_id=cart["id"], approved=False)
-    try:
-        server.execute_payment(cart_id=cart["id"])
-        assert False
-    except ValueError as exc:
-        assert "valid user approval" in str(exc)
-
-
-def test_approval_rejected_for_auto_approved_cart():
-    _intent, cart = _pay_a_monitor()
-    try:
-        server.request_approval(cart_id=cart["id"], approved=True)
-        assert False
-    except ValueError as exc:
-        assert "only valid for an escalated" in str(exc)
+def test_web_proof_is_bound_to_the_cart():
+    from opayai import web
+    intent = server.create_intent_mandate(
+        user_id="u_1", category="monitor", max_total="300",
+        hard_requirements=["free_returns", "compat:macbook"],
+        per_transaction="400", per_period="1000", step_up_threshold="250")
+    offers = server.search_offers(category="monitor", max_price="300")
+    picked = [o["id"] for o in offers if o["free_returns"]
+              and "macbook" in o["specs"].get("compat", [])][:1]
+    cart = server.propose_cart(intent_id=intent["id"], offer_ids=picked,
+                               rail="ap2", rationale="fit")
+    server.evaluate_policy(cart_id=cart["id"])
+    server.execute_payment(cart_id=cart["id"])          # writes the pending request
+    # authorizing a different cart id does nothing for this one
+    assert web.authorize("cm_does_not_exist", "step_up") is False
+    assert server.execute_payment(cart_id=cart["id"])["status"] == "PENDING_STEP_UP"
 
 
 def test_payment_rechecks_stock_after_policy_decision():

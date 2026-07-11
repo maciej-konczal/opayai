@@ -22,24 +22,31 @@ def _payload_bytes(proof: dict) -> bytes:
     return json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
 
 
-def issue(kind: str, cart: CartMandate, ttl_minutes: int = 5,
-          now: datetime | None = None) -> dict:
+def issue_fields(kind: str, cart_id: str, intent_id: str, amount, currency: str,
+                 ttl_minutes: int = 5, now: datetime | None = None) -> dict:
+    """Issue a signed, expiring proof from raw fields (used by the trusted surface)."""
     if kind not in {"approval", "step_up"}:
         raise ValueError("unsupported authorization kind")
     now = now or _now()
     proof = {
         "id": "auth_" + secrets.token_hex(8),
         "kind": kind,
-        "cart_id": cart.id,
-        "intent_id": cart.intent_mandate_id,
-        "amount": str(cart.total.amount),
-        "currency": cart.total.currency,
+        "cart_id": cart_id,
+        "intent_id": intent_id,
+        "amount": str(amount),
+        "currency": currency,
         "issued_at": now.isoformat(),
         "expires_at": (now + timedelta(minutes=ttl_minutes)).isoformat(),
         "nonce": secrets.token_hex(16),
     }
     proof["signature"] = default_signer().sign_bytes(_payload_bytes(proof))
     return proof
+
+
+def issue(kind: str, cart: CartMandate, ttl_minutes: int = 5,
+          now: datetime | None = None) -> dict:
+    return issue_fields(kind, cart.id, cart.intent_mandate_id, cart.total.amount,
+                        cart.total.currency, ttl_minutes, now)
 
 
 def verify(proof: dict | None, kind: str, cart: CartMandate,
