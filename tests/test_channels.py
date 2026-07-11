@@ -17,9 +17,25 @@ class _Boom:
         raise RuntimeError("channel down")
 
 
+class _FakeBus:
+    def __init__(self):
+        self.cb = None
+
+    def subscribe(self, cb):
+        self.cb = cb
+
+
+class _FakeEvent:
+    def __init__(self, d):
+        self._d = d
+
+    def model_dump(self, mode="json"):
+        return dict(self._d)
+
+
 def test_deliver_fans_out_and_reports_success():
     r = _Rec()
-    out = channels.deliver({"title": "x", "body": "y", "needs_action": True}, [r])
+    out = channels.deliver({"title": "x"}, [r])
     assert out == ["rec"] and len(r.got) == 1
 
 
@@ -29,27 +45,53 @@ def test_failing_channel_does_not_block_others():
     assert out == ["rec"]  # boom swallowed, rec still delivered
 
 
-def test_enabled_channels_are_env_driven(monkeypatch):
+def test_ping_and_webhook_are_env_driven(monkeypatch):
     monkeypatch.setenv("OPAYAI_NOTIFY", "0")            # desktop off
     monkeypatch.delenv("OPAYAI_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("RESEND_API_KEY", raising=False)
     monkeypatch.delenv("OPAYAI_NOTIFY_EMAIL", raising=False)
-    assert channels.enabled_channels() == []
+    assert channels.ping_channels() == []
+    assert channels.event_webhook() is None
 
     monkeypatch.setenv("OPAYAI_WEBHOOK_URL", "http://localhost:9/hook")
-    assert [c.name for c in channels.enabled_channels()] == ["webhook"]
+    assert channels.event_webhook().name == "webhook"
 
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     monkeypatch.setenv("OPAYAI_NOTIFY_EMAIL", "me@example.com")
-    names = [c.name for c in channels.enabled_channels()]
-    assert "webhook" in names and "email" in names
+    assert [c.name for c in channels.ping_channels()] == ["email"]
 
 
-def test_desktop_enabled_by_default(monkeypatch):
+def test_desktop_ping_enabled_by_default(monkeypatch):
     monkeypatch.delenv("OPAYAI_NOTIFY", raising=False)
-    monkeypatch.delenv("OPAYAI_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("RESEND_API_KEY", raising=False)
-    assert [c.name for c in channels.enabled_channels()] == ["desktop"]
+    assert [c.name for c in channels.ping_channels()] == ["desktop"]
+
+
+def test_webhook_receives_full_event_plus_notification(monkeypatch):
+    rec = _Rec("webhook")
+    monkeypatch.setattr(channels, "event_webhook", lambda: rec)
+    monkeypatch.setattr(channels, "ping_channels", lambda: [])
+    bus = _FakeBus()
+    channels.install(bus)
+    bus.cb(_FakeEvent({"seq": 3, "ts": "t", "type": "policy.evaluated", "actor": "policy",
+                       "mandate_ref": "im_1", "payload": {"result": "ESCALATE"}}))
+    got = rec.got[0]
+    assert got["type"] == "policy.evaluated" and got["seq"] == 3
+    assert got["payload"] == {"result": "ESCALATE"}          # full event, like the JSONL
+    assert got["notification"]["needs_action"] is True       # + the action notification
+
+
+def test_webhook_receives_events_without_a_notification(monkeypatch):
+    rec = _Rec("webhook")
+    monkeypatch.setattr(channels, "event_webhook", lambda: rec)
+    monkeypatch.setattr(channels, "ping_channels", lambda: [])
+    bus = _FakeBus()
+    channels.install(bus)
+    bus.cb(_FakeEvent({"seq": 1, "ts": "t", "type": "intent.created", "actor": "user",
+                       "mandate_ref": "im_1", "payload": {"id": "im_1"}}))
+    got = rec.got[0]
+    assert got["type"] == "intent.created"                   # every event reaches the webhook
+    assert "notification" not in got                         # no user-facing notification for this one
 
 
 def test_email_escapes_html_and_sets_idempotency(monkeypatch):

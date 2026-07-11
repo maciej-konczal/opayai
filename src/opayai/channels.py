@@ -19,8 +19,10 @@ import json
 import os
 import platform
 import subprocess
+import sys
 import urllib.request
 from typing import Protocol
+from opayai import notify
 
 
 def _post_json(url: str, payload: dict, headers: dict | None = None, timeout: int = 6) -> int:
@@ -86,13 +88,11 @@ class EmailChannel:
             headers={"Authorization": f"Bearer {self.api_key}", "Idempotency-Key": key})
 
 
-def enabled_channels() -> list[NotificationChannel]:
+def ping_channels() -> list[NotificationChannel]:
+    """Channels that fire only on action-needed notifications (desktop, email)."""
     chans: list[NotificationChannel] = []
     if os.environ.get("OPAYAI_NOTIFY", "1") != "0":
         chans.append(DesktopChannel())
-    url = os.environ.get("OPAYAI_WEBHOOK_URL")
-    if url:
-        chans.append(WebhookChannel(url))
     api_key = os.environ.get("RESEND_API_KEY")
     to = os.environ.get("OPAYAI_NOTIFY_EMAIL")
     if api_key and to:
@@ -102,12 +102,17 @@ def enabled_channels() -> list[NotificationChannel]:
     return chans
 
 
-def deliver(n: dict, channels: list[NotificationChannel] | None = None) -> list[str]:
-    """Deliver a notification to all channels; return names that succeeded.
+def event_webhook() -> WebhookChannel | None:
+    """The webhook receives EVERY event (the full stream, like the JSONL)."""
+    url = os.environ.get("OPAYAI_WEBHOOK_URL")
+    return WebhookChannel(url) if url else None
 
-    A failing channel never blocks the others (delivery is best-effort).
+
+def deliver(n: dict, channels: list[NotificationChannel]) -> list[str]:
+    """Deliver to each channel; return names that succeeded. Best-effort.
+
+    A failing channel never blocks the others.
     """
-    channels = channels if channels is not None else enabled_channels()
     delivered = []
     for c in channels:
         try:
@@ -116,3 +121,32 @@ def deliver(n: dict, channels: list[NotificationChannel] | None = None) -> list[
         except Exception:
             pass
     return delivered
+
+
+def install(bus) -> None:
+    """Subscribe delivery to the event bus.
+
+    - Webhook: POST EVERY event (seq, ts, type, actor, mandate_ref, payload) so an
+      external service (e.g. Boski) stays fully in sync; an action-needed event also
+      carries a `notification` object it can push to the user.
+    - Desktop/email: fire only on action-needed notifications (the user pings).
+    """
+    pings = ping_channels()
+    webhook = event_webhook()
+
+    def _sink(event) -> None:
+        ev = event.model_dump(mode="json")
+        n = notify.notification_for(ev)
+        if webhook is not None:
+            payload = dict(ev)
+            if n is not None:
+                payload["notification"] = n
+            try:
+                webhook.deliver(payload)
+            except Exception:
+                pass
+        if n is not None and n["needs_action"]:
+            print(f"[opayai] ACTION NEEDED: {n['title']} - {n['body']}", file=sys.stderr, flush=True)
+            deliver(n, pings)
+
+    bus.subscribe(_sink)

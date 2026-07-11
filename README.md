@@ -189,9 +189,12 @@ only when it needs input, approval, or a decision" behavior. Action-needed ones 
 out to every enabled **channel** (`src/opayai/channels.py`):
 
 - **Desktop** - native macOS banner (on by default; `OPAYAI_NOTIFY=0` to mute).
-- **Webhook** - `OPAYAI_WEBHOOK_URL` gets a JSON POST per action-needed notification.
-  This is the integration seam a host like Boski uses to push to the user's phone.
-  Demo it against any listener (e.g. `webhook.site`).
+- **Webhook** - `OPAYAI_WEBHOOK_URL` gets a JSON POST for **every** event (the full
+  stream, same shape as the JSONL: `seq, ts, type, actor, mandate_ref, payload`), so
+  an external service stays fully in sync. Action-needed events additionally carry a
+  `notification` object (title/body/needs_action) it can push to the user. This is
+  the integration seam a host like Boski subscribes to. Demo it against any listener
+  (e.g. `webhook.site` or `python -m opayai.webhook_sink`).
 - **Email** - set `RESEND_API_KEY` + `OPAYAI_NOTIFY_EMAIL` to email the user. Note
   the default `onboarding@resend.dev` sender is a Resend sandbox: it only delivers to
   your own Resend account email until you verify a domain and set `OPAYAI_EMAIL_FROM`.

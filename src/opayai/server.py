@@ -295,27 +295,9 @@ def _install_event_logging() -> None:
     bus.subscribe(_sink)
 
 
-def _install_notifications() -> None:
-    """Deliver a proactive ping to every enabled channel when action is needed.
-
-    The "pings you only when it needs input, approval, or a decision" behavior.
-    Channels (desktop / webhook / email) are env-driven; see opayai.channels.
-    """
-    active = channels.enabled_channels()
-
-    def _sink(event) -> None:
-        n = notify.notification_for(event.model_dump(mode="json"))
-        if not n or not n["needs_action"]:
-            return
-        print(f"[opayai] ACTION NEEDED: {n['title']} - {n['body']}", file=sys.stderr, flush=True)
-        channels.deliver(n, active)
-
-    bus.subscribe(_sink)
-
-
 def run() -> None:
     _install_event_logging()
-    _install_notifications()
+    channels.install(bus)   # webhook = full event feed; desktop/email = action pings
     app.run()
 
 
