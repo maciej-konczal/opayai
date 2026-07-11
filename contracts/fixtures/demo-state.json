@@ -1,7 +1,7 @@
 {
   "intent": {
     "id": "im_demo", "user_id": "user_demo", "agent_id": "webapp",
-    "description": "Zestaw opon zimowych do 1600 zł", "status": "open",
+    "description": "A set of winter tires under PLN 1,600", "status": "open",
     "constraints": {"max_total": 160000, "currency": "PLN", "categories": ["winter_tires"], "requires_refundability": true, "min_return_window_days": 14, "deliver_by": null, "allowed_rails": ["blik_lite"], "expiry": "2026-07-12T18:00:00+00:00"},
     "spent_total": 0
   },

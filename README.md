@@ -1,11 +1,11 @@
-# MandateLoop
+# OPayAI
 
-MandateLoop gives any MCP-capable agent safe purchasing capability over a
+OPayAI gives any MCP-capable agent safe purchasing capability over a
 mocked Polish store, with mobile chat as the primary human surface:
 
 intent → human approval → in-chat BLIK → tracking → keep or return → evidence.
 
-The agent may propose and track, but it can never consent. The MandateLoop MCP
+The agent may propose and track, but it can never consent. The OPayAI MCP
 server deliberately has no `authorize_payment`, `sign_mandate`,
 `approve_return`, or `confirm_delivery` tool.
 
@@ -56,5 +56,5 @@ compatibility. There is one demo user and no delegated mode.
 The generic prototype remains under `src/opayai/`. The latest `main` additions
 are merged here: agents present options and wait by default, Cursor receives the
 same rule, and webhook subscribers receive the full event feed with action-needed
-notifications. Those legacy tools are not mounted at MandateLoop's `/mcp`;
-MandateLoop's contract-safe implementation lives in `backend/` and `web/`.
+notifications. Those legacy tools are not mounted at OPayAI's `/mcp`;
+OPayAI's contract-safe implementation lives in `backend/` and `web/`.

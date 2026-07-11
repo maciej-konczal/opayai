@@ -25,11 +25,11 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        print(f"MandateLoop BLIK phone page is reachable at http://{lan_ip()}:8000/pay/blik/<session_id>")
+        print(f"OPayAI BLIK phone page is reachable at http://{lan_ip()}:8000/pay/blik/<session_id>")
         async with mcp.session_manager.run():
             yield
 
-    app = FastAPI(title="MandateLoop", version="0.4.0", lifespan=lifespan)
+    app = FastAPI(title="OPayAI", version="0.4.0", lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
     app.state.service = service
 
@@ -50,14 +50,14 @@ def create_app() -> FastAPI:
         if not session:
             raise HTTPException(404, "Unknown BLIK session")
         amount = f"{session.amount // 100:,}".replace(",", " ") + f",{session.amount % 100:02d} zł"
-        return f'''<!doctype html><html lang="pl"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MandateLoop BLIK</title>
+        return f'''<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OPayAI BLIK</title>
         <style>body{{margin:0;background:#0d1110;color:#f5f5ed;font:16px ui-rounded,system-ui;display:grid;min-height:100vh;place-items:center}}main{{width:min(92vw,370px);background:#f5f5ed;color:#13231d;padding:28px;border-radius:26px;box-shadow:0 20px 70px #0008}}small{{color:#64736d;text-transform:uppercase;letter-spacing:.13em}}h1{{font-size:23px;margin:24px 0 8px}}strong{{font-size:32px}}button{{width:100%;border:0;border-radius:12px;padding:16px;margin-top:12px;font-weight:800;font-size:16px;background:#0aaa64;color:white}}button:last-child{{background:#e8ece7;color:#183027}}</style>
-        <main><small>MandateLoop · sklep demo</small><h1>Potwierdzasz płatność BLIK?</h1><strong>{amount}</strong><p>Mandat podpisany na laptopie. Ten ekran tylko potwierdza płatność.</p><form method="post"><button name="decision" value="confirm">Potwierdź</button><button name="decision" value="reject">Odrzuć</button></form></main></html>'''
+        <main><small>OPayAI · demo store</small><h1>Confirm this BLIK payment?</h1><strong>{amount}</strong><p>You signed the mandate on your laptop. This screen only confirms the payment.</p><form method="post"><button name="decision" value="confirm">Confirm payment</button><button name="decision" value="reject">Decline</button></form></main></html>'''
 
     @app.post("/pay/blik/{session_id}", response_class=HTMLResponse)
     def blik_confirm(session_id: str, decision: str = Form(...)):
         purchase = service.blik_decision(session_id, decision)
-        return HTMLResponse(f"<meta name='viewport' content='width=device-width'><body style='font-family:system-ui;padding:32px'><h2>{'Płatność potwierdzona' if purchase.order_status == 'paid' else 'Płatność odrzucona'}</h2><p>Możesz zamknąć tę stronę i wrócić do MandateLoop.</p></body>")
+        return HTMLResponse(f"<meta name='viewport' content='width=device-width'><body style='font-family:system-ui;padding:32px'><h2>{'Payment confirmed' if purchase.order_status == 'paid' else 'Payment declined'}</h2><p>You can close this page and return to OPayAI.</p></body>")
 
     web_dist = Path(__file__).resolve().parents[2] / "web" / "dist"
     if web_dist.exists():

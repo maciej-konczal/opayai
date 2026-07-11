@@ -7,7 +7,7 @@ from .service import MandateLoopService
 
 
 def create_mcp(service: MandateLoopService) -> FastMCP:
-    mcp = FastMCP("MandateLoop")
+    mcp = FastMCP("OPayAI")
 
     @mcp.tool()
     def search_products(query: str, category: str | None = None, max_price: int | None = None) -> dict:
@@ -18,7 +18,7 @@ def create_mcp(service: MandateLoopService) -> FastMCP:
     def draft_intent(description: str) -> dict:
         """Create an unsigned intent draft. A human must sign it in the web app."""
         intent = service.draft_intent(description, agent_id="mcp")
-        return {"intent_id": intent.id, "parsed_constraints": intent.constraints.model_dump(mode="json"), "missing": ["human signature in MandateLoop web app"]}
+        return {"intent_id": intent.id, "parsed_constraints": intent.constraints.model_dump(mode="json"), "missing": ["human signature in the OPayAI web app"]}
 
     @mcp.tool()
     def request_purchase(intent_id: str, sku: str, qty: int = 1) -> dict:

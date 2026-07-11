@@ -118,8 +118,8 @@ class MandateLoopService:
             return {"auth_mode": "demo_key", "credential_id": "demo-device",
                     "message": "Demo key is active; no platform enrollment is needed."}
         options = generate_registration_options(
-            rp_id=self.rp_id, rp_name="MandateLoop", user_name="user_demo",
-            user_id=b"user_demo", user_display_name="MandateLoop Demo User",
+            rp_id=self.rp_id, rp_name="OPayAI", user_name="user_demo",
+            user_id=b"user_demo", user_display_name="OPayAI Demo User",
             authenticator_selection=AuthenticatorSelectionCriteria(
                 authenticator_attachment=AuthenticatorAttachment.PLATFORM,
                 resident_key=ResidentKeyRequirement.PREFERRED,
@@ -198,7 +198,7 @@ class MandateLoopService:
             purchase.exception.resolution_status = "approved"
             purchase.status, purchase.order_status = "return_requested", "return_requested"
             self._event("user", "webauthn_signed", purchase.id, context="resolution", verified=True)
-            self._event("merchant", "notification", purchase.id, message="Zwrot zaakceptowany. Kod nadania: ML-RETURN-482913")
+            self._event("merchant", "notification", purchase.id, message="Return approved. Shipping code: OPAY-RETURN-482913")
         else:
             raise ValueError("Unsupported signing context.")
         self.store.save()
@@ -271,7 +271,7 @@ class MandateLoopService:
                             agent_attribution={"agent_id": agent_id, "client_info": client_info or agent_id})
         self.store.purchases[purchase.id] = purchase
         self._event("agent", "proposal_ready", purchase.id, intent_id=intent.id, sku=sku, total=amount)
-        self._event("system", "notification", purchase.id, message="Nowa prośba o zakup czeka na zatwierdzenie w panelu.")
+        self._event("system", "notification", purchase.id, message="A new purchase request is waiting for your approval.")
         self.store.save()
         return purchase
 
@@ -309,13 +309,13 @@ class MandateLoopService:
             self._event("rail", "payment_confirmed", purchase.id, payment_id=payment.id,
                         session_id=session_id, channel=channel)
             self._event("merchant", "status_change", purchase.id, order_status="paid")
-            self._event("merchant", "notification", purchase.id, message="Płatność BLIK potwierdzona. Zamówienie przyjęte.")
+            self._event("merchant", "notification", purchase.id, message="BLIK payment confirmed. Order accepted.")
         else:
             payment.status = "failed"
             payment.attempts.append({"ts": now_iso(), "result": session.status, "detail": "BLIK phone decision"})
             purchase.status, purchase.order_status = "await_retry", "payment_failed"
             self._event("rail", "payment_failed", purchase.id, payment_id=payment.id, result=session.status)
-            self._event("system", "notification", purchase.id, message="Płatność odrzucona — spróbować ponownie?")
+            self._event("system", "notification", purchase.id, message="Payment declined. Would you like to try again?")
         self.store.save()
         return purchase
 
@@ -390,7 +390,7 @@ class MandateLoopService:
         elif purchase.order_status == "shipped":
             purchase.order_status, purchase.order["status"] = "in_paczkomat", "in_paczkomat"
             self._event("merchant", "status_change", purchase.id, order_status="in_paczkomat", locker_id="WAW117M", pickup_code="482913")
-            self._event("merchant", "notification", purchase.id, message="Paczkomat WAW117M · kod odbioru 482913")
+            self._event("merchant", "notification", purchase.id, message="Parcel locker WAW117M · pickup code 482913")
         elif purchase.order_status == "in_paczkomat":
             purchase.order_status, purchase.order["status"] = "picked_up", "picked_up"
             self._event("user", "status_change", purchase.id, order_status="picked_up")
@@ -426,11 +426,11 @@ class MandateLoopService:
                                           evidence={"expected": expected, "observed": observed}, proposed_resolution="full_return")
             purchase.exception, purchase.order_status, purchase.status = exception, "exception", "resolution_proposed"
             self._event("system", "exception_detected", purchase.id, exception_type="ITEM_MISMATCH", expected=expected, observed=observed)
-            self._event("system", "notification", purchase.id, message="Wykryto niezgodny produkt. Proponujemy pełny zwrot.")
+            self._event("system", "notification", purchase.id, message="Wrong item detected. A full return is recommended.")
         else:
             purchase.status = "verifying"
             self._event("system", "delivery_verified", purchase.id, result="match")
-            self._event("system", "notification", purchase.id, message="Produkt zgodny z mandatem. Zostawiasz produkt?")
+            self._event("system", "notification", purchase.id, message="The product matches your mandate. Would you like to keep it?")
 
     def request_return(self, purchase_id: str, reason: str) -> Purchase:
         purchase = self.store.purchases[purchase_id]
@@ -481,7 +481,7 @@ class MandateLoopService:
             self.rails["blik_lite"].sessions[purchase.payment.rail_ref].decline_once = True
         elif type_ == "wrong_item":
             assert purchase.order
-            purchase.order["line_items_shipped"] = [{"sku": "MON-WRONG-24", "title": "Inny produkt", "qty": 1, "unit_price": 1}]
+            purchase.order["line_items_shipped"] = [{"sku": "MON-WRONG-24", "title": "Wrong product", "qty": 1, "unit_price": 1}]
         else:
             raise ValueError("Unknown demo fault")
         self._event("system", "demo_fault_armed", purchase.id, fault=type_)

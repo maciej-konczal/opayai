@@ -1,4 +1,4 @@
-# MandateLoop demo runbook
+# OPayAI demo runbook
 
 Run the API from the repository root:
 
@@ -24,20 +24,20 @@ AUTH_MODE=webauthn WEBAUTHN_ORIGIN=http://localhost:5173 \
   uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Use `localhost` for WebAuthn. On mobile, **Zapłać w rozmowie** opens the BLIK
+Use `localhost` for WebAuthn. On mobile, **Pay in chat** opens the BLIK
 code prompt inside the chat; enter any six digits such as `482913` and confirm.
 On desktop, the checkout sheet still exposes a QR/link as a cross-device fallback.
 
 ## A — web purchase
 
-1. Submit: `Kup mi zestaw opon zimowych 205/55 R16 do 1600 zł, min. 14 dni na zwrot.`
+1. Submit: `Buy me a set of 205/55 R16 winter tires under PLN 1,600 with at least 14-day returns.`
 2. Sign the mandate, observe the 7-day and non-refundable alternatives folded
    under the red policy clause chips, then choose Frostline.
-3. Sign the exact cart. Tap **Zapłać w rozmowie**, enter `482913`, and confirm
+3. Sign the exact cart. Tap **Pay in chat**, enter `482913`, and confirm
    the bank-style BLIK prompt without leaving the agent chat.
-4. Use **Demo: następny etap** through shipped, paczkomat and picked up.
-   The paczkomat notification shows `WAW117M` and `482913`.
-5. The agent asks **Zostawiam / Zwracam** in chat. Choose **Zostawiam**, then
+4. Use **Demo: next stage** through shipped, parcel locker and picked up.
+   The parcel-locker notification shows `WAW117M` and `482913`.
+5. The agent asks **Keep it / Return it** in chat. Choose **Keep it**, then
    download the evidence bundle from the close-out message.
 
 ## B — exception and refund
@@ -51,8 +51,8 @@ On desktop, the checkout sheet still exposes a QR/link as a cross-device fallbac
 ## C — decline and revoke
 
 1. Before confirming BLIK, arm **Decline BLIK**. The first phone confirmation
-   fails; use **Spróbuj ponownie** for a fresh BLIK session.
-2. Hit **COFNIJ MANDAT**. A later MCP `request_purchase` returns
+   fails; use **Try again** for a fresh BLIK session.
+2. Hit **REVOKE MANDATE**. A later MCP `request_purchase` returns
    `blocked: mandate_not_open`.
 
 ## MCP smoke test
