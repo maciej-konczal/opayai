@@ -17,7 +17,7 @@ def test_run_flow_completes_purchase_and_return():
         client=None)
     assert result["order"]["status"] in ("RETURN_REQUESTED",)
     assert result["decision"]["result"] in ("AUTO_APPROVE", "ESCALATE")
-    assert result["receipt_reference"].startswith(("x402_", "card_"))
+    assert result["receipt_reference"].startswith(("ap2_", "card_"))
 
 
 class _FakeMessages:

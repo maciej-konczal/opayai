@@ -15,7 +15,7 @@ def test_end_to_end_happy_path():
               and "macbook" in o["specs"].get("compat", [])
               and o["delivery_est_date"] <= "2026-07-12"][:1]
     cart = server.propose_cart(intent_id=intent["id"], offer_ids=picked,
-                               rail="x402", rationale="best fit")
+                               rail="ap2", rationale="best fit")
     decision = server.evaluate_policy(cart_id=cart["id"])
     assert decision["result"] == "AUTO_APPROVE"
     order = server.execute_payment(cart_id=cart["id"])
@@ -58,7 +58,7 @@ def test_suggest_offers_shortlist_then_buy_the_choice():
     # the user picks the top one -> the rest of the flow works on that offer
     chosen = shortlist[0]["offer_id"]
     cart = server.propose_cart(intent_id=intent["id"], offer_ids=[chosen],
-                               rail="x402", rationale="user picked")
+                               rail="ap2", rationale="user picked")
     assert server.evaluate_policy(cart_id=cart["id"])["result"] == "AUTO_APPROVE"
     assert server.execute_payment(cart_id=cart["id"])["status"] == "PAID"
 
@@ -73,7 +73,7 @@ def _pay_a_monitor(per_period="1000"):
               and "macbook" in o["specs"].get("compat", [])
               and o["delivery_est_date"] <= "2026-07-12"][:1]
     cart = server.propose_cart(intent_id=intent["id"], offer_ids=picked,
-                               rail="x402", rationale="best fit")
+                               rail="ap2", rationale="best fit")
     server.evaluate_policy(cart_id=cart["id"])
     return intent, cart
 
@@ -105,7 +105,7 @@ def test_step_up_blocks_payment_until_passkey():
     picked = [o["id"] for o in offers if o["free_returns"]
               and "macbook" in o["specs"].get("compat", [])][:1]
     cart = server.propose_cart(intent_id=intent["id"], offer_ids=picked,
-                               rail="x402", rationale="fit")
+                               rail="ap2", rationale="fit")
     dec = server.evaluate_policy(cart_id=cart["id"])
     assert dec["step_up_required"] is True
     # payment refused before the passkey ceremony

@@ -11,7 +11,7 @@ from opayai.mandate import create_intent_mandate as _create_intent, propose_cart
 from opayai.policy import evaluate_policy as _evaluate
 from opayai.orders import store as order_store
 from opayai.events import bus
-from opayai import stepup, recommend
+from opayai import stepup, recommend, notify, channels
 
 app = FastMCP("opayai-mcp")
 
@@ -85,8 +85,13 @@ def suggest_offers(intent_id: str, limit: int = 3) -> list[dict]:
     offers = data.search_offers(category=intent.constraint.category)
     for o in offers:
         SESSION["offers"][o.id] = o
-    return recommend.suggest([o.model_dump(mode="json") for o in offers],
-                             intent.constraint, limit)
+    shortlist = recommend.suggest([o.model_dump(mode="json") for o in offers],
+                                  intent.constraint, limit)
+    bus.publish("suggestions.ready", "agent",
+                {"count": len(shortlist),
+                 "qualifying": sum(1 for s in shortlist if s["qualifies"])},
+                mandate_ref=intent_id)
+    return shortlist
 
 
 @app.tool()
@@ -94,7 +99,7 @@ def propose_cart(intent_id: str, offer_ids: list[str], rail: str, rationale: str
     """Build and sign a Cart Mandate: the specific offers the agent wants to buy.
 
     Call after search_offers, once you have chosen offer_ids that satisfy the
-    intent's hard requirements and budget. `rail` is the payment rail: "x402" or
+    intent's hard requirements and budget. `rail` is the payment rail: "ap2" or
     "card". `rationale` is a short human-readable reason shown to the user. The
     cart MUST be checked with evaluate_policy before execute_payment.
     """
@@ -233,6 +238,19 @@ def get_audit_trail(mandate_ref: str | None = None) -> list[dict]:
     return [e.model_dump(mode="json") for e in bus.trail(mandate_ref)]
 
 
+@app.tool()
+def get_notifications(mandate_ref: str | None = None) -> list[dict]:
+    """Proactive, user-facing notifications derived from the event stream.
+
+    Each has needs_action (bool) and level ("action_required" | "update"). Surface
+    the needs_action items FIRST and tell the user - these are the moments the
+    agent needs input, approval, a passkey, or a decision (which option to buy).
+    The rest are progress updates (payment, shipped, delivered, return).
+    """
+    events = [e.model_dump(mode="json") for e in bus.trail(mandate_ref)]
+    return notify.notifications(events)
+
+
 def _web_base() -> str:
     return os.environ.get("OPAYAI_WEB_BASE", "http://localhost:8000")
 
@@ -261,8 +279,27 @@ def _install_event_logging() -> None:
     bus.subscribe(_sink)
 
 
+def _install_notifications() -> None:
+    """Deliver a proactive ping to every enabled channel when action is needed.
+
+    The "pings you only when it needs input, approval, or a decision" behavior.
+    Channels (desktop / webhook / email) are env-driven; see opayai.channels.
+    """
+    active = channels.enabled_channels()
+
+    def _sink(event) -> None:
+        n = notify.notification_for(event.model_dump(mode="json"))
+        if not n or not n["needs_action"]:
+            return
+        print(f"[opayai] ACTION NEEDED: {n['title']} - {n['body']}", file=sys.stderr, flush=True)
+        channels.deliver(n, active)
+
+    bus.subscribe(_sink)
+
+
 def run() -> None:
     _install_event_logging()
+    _install_notifications()
     app.run()
 
 

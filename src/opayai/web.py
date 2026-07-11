@@ -13,6 +13,7 @@ import html
 import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from opayai import notify, data
 
 
 def log_path() -> str:
@@ -112,6 +113,9 @@ td.k{{color:#8b949e;width:120px}}
 .ev .seq{{color:#6e7681;width:26px}} .ev .type{{color:#58a6ff;width:190px}}
 .ev .actor{{color:#a371f7;width:70px}} .ev .pl{{color:#8b949e;flex:1;word-break:break-word}}
 .muted{{color:#6e7681}}
+.note{{border:1px solid #21262d;background:#161b22;border-radius:8px;padding:9px 12px;margin:7px 0;font-size:13px}}
+.note.act{{border-color:#8a5a00;background:#221a08}}
+.note .t{{font-weight:640}} .note.act .t{{color:#f0b429}} .note .b{{color:#9aa4b2;margin-left:6px}}
 </style></head><body>{brand}{body}</body></html>"""
 
 
@@ -122,7 +126,7 @@ def _page(title: str, body: str) -> str:
 def render_index(events: list[dict]) -> str:
     orders = sorted(order_index(events).values(), key=lambda r: r.get("order_id", ""))
     if not orders:
-        body = ("<h1>Orders</h1><p class=muted>No orders yet. Complete a "
+        body = ("<h1>Orders</h1><p><a href='/profile'>Your profile and context</a></p><p class=muted>No orders yet. Complete a "
                 "purchase (via the agent or the CLI) and this refreshes automatically.</p>")
         return _page("opayai orders", body)
     rows = []
@@ -133,7 +137,7 @@ def render_index(events: list[dict]) -> str:
             f'<div class=card><a href="/order/{oid}"><b>{oid}</b></a> '
             f'<span class=badge style="background:{color}">{html.escape(str(r.get("status")))}</span>'
             f'<div class=muted>intent {html.escape(str(r.get("intent")))}</div></div>')
-    body = "<h1>Orders</h1>" + "".join(rows)
+    body = "<h1>Orders</h1><p><a href='/profile'>Your profile and context</a></p>" + "".join(rows)
     return _page("opayai orders", body)
 
 
@@ -156,6 +160,16 @@ def render_order(events: list[dict], order_id: str) -> str:
         + row("Budget", s.get("max_total"))
         + row("Intent", s.get("intent"))
         + '</table></div>')
+    notes = notify.notifications(d["trail"])
+    notes_html = ""
+    if notes:
+        def note(n):
+            cls = "note act" if n["needs_action"] else "note"
+            return (f'<div class="{cls}"><span class=t>{html.escape(n["title"])}</span>'
+                    f'<span class=b>{html.escape(n["body"])}</span></div>')
+        ordered = ([n for n in notes if n["needs_action"]]
+                   + [n for n in notes if not n["needs_action"]])
+        notes_html = "<h2>Notifications</h2>" + "".join(note(n) for n in ordered)
     evs = []
     for e in d["trail"]:
         evs.append(
@@ -163,8 +177,63 @@ def render_order(events: list[dict], order_id: str) -> str:
             f'<span class=type>{html.escape(e.get("type",""))}</span>'
             f'<span class=actor>{html.escape(e.get("actor",""))}</span>'
             f'<span class=pl>{html.escape(json.dumps(e.get("payload",{})))}</span></div>')
-    body = summary_html + "<h2>Signed audit trail</h2>" + "".join(evs) + '<p><a href="/">All orders</a></p>'
+    body = (summary_html + notes_html + "<h2>Signed audit trail</h2>"
+            + "".join(evs) + '<p><a href="/">All orders</a></p>')
     return _page(f"Order {order_id}", body)
+
+
+def render_profile(events: list[dict]) -> str:
+    p = data.load_persona()
+    convos = data.load_conversations()
+    seed = data.load_seed_orders()
+    d = p.get("defaults", {})
+
+    def row(k, v):
+        return f'<tr><td class=k>{k}</td><td>{html.escape(str(v))}</td></tr>' if v else ""
+
+    budget = d.get("budget", {}).get("amount")
+    stepup = d.get("step_up_over", {}).get("amount")
+    ship = p.get("shipping", {})
+    prefs = ('<div class=card><table>'
+             + row("User", f'{p.get("name")} ({p.get("id")})')
+             + row("Goals", ", ".join(p.get("goals", [])))
+             + row("Motivations", ", ".join(p.get("motivations", [])))
+             + row("Style", p.get("communication_style"))
+             + row("Default budget", f'${budget}' if budget else None)
+             + row("Preferred brands", ", ".join(d.get("brands", [])))
+             + row("Sustainability", d.get("sustainability"))
+             + row("Risk tolerance", d.get("risk_tolerance"))
+             + row("Passkey over", f'${stepup}' if stepup else None)
+             + row("Ships to", f'{ship.get("city")}, {ship.get("country")}' if ship else None)
+             + '</table></div>')
+    pms = "".join(
+        f'<div class=card><b>{html.escape(m.get("label", ""))}</b> '
+        f'<span class=muted>rail: {html.escape(m.get("rail", ""))}</span>'
+        + (' <span class=badge style="background:#16a34a">default</span>' if m.get("default") else "")
+        + '</div>' for m in p.get("payment_methods", []))
+    conv = "".join(
+        f'<div class=ev><span class=actor>{html.escape(c.get("role", ""))}</span>'
+        f'<span class=pl>{html.escape(c.get("text", ""))}</span></div>' for c in convos)
+    rows = []
+    for o in seed:
+        amt = o.get("amount", {}).get("amount", "")
+        rows.append(f'<div class=card>{html.escape(o.get("item", ""))} - ${html.escape(str(amt))} '
+                    f'<span class=muted>{html.escape(o.get("status", ""))} - {html.escape(o.get("date", ""))}</span></div>')
+    for r in sorted(order_index(events).values(), key=lambda x: x.get("order_id", "")):
+        oid = html.escape(r["order_id"])
+        color = _STATUS_COLOR.get(r.get("status"), "#6b7280")
+        rows.append(f'<div class=card><a href="/order/{oid}">{oid}</a> '
+                    f'<span class=badge style="background:{color}">{html.escape(str(r.get("status")))}</span></div>')
+    orders_html = "".join(rows) or '<p class=muted>No orders yet.</p>'
+    body = (f'<h1>What Boski knows about {html.escape(str(p.get("name")))}</h1>'
+            '<p class=muted>The context your agent uses before it shops. '
+            'Give it a product prompt next.</p>'
+            '<h2>Preferences</h2>' + prefs
+            + '<h2>Payment methods</h2>' + pms
+            + '<h2>Remembered from conversations</h2>' + conv
+            + '<h2>Recent orders</h2>' + orders_html
+            + '<p><a href="/">All orders</a></p>')
+    return _page(f'{p.get("name")} - profile', body)
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -179,7 +248,9 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         events = load_events()
         path = self.path.split("?", 1)[0].rstrip("/")
-        if path.startswith("/order/"):
+        if path == "/profile":
+            self._send(render_profile(events))
+        elif path.startswith("/order/"):
             self._send(render_order(events, path[len("/order/"):]))
         else:
             self._send(render_index(events))

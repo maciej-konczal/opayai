@@ -1,14 +1,14 @@
 # MandateLoop
 
-MandateLoop gives an AI agent a safe purchasing capability over a mocked Polish
-store: intent → **human passkey approval** → BLIK confirmation → paczkomat
-tracking → keep or return → hash-chained evidence bundle.
+MandateLoop gives any MCP-capable agent safe purchasing capability over a
+mocked Polish store: intent → human passkey approval → BLIK confirmation →
+paczkomat tracking → keep or return → hash-chained evidence bundle.
 
-The design point is deliberately narrow: an agent may propose and track, but
-can never consent. The MCP server deliberately has no `authorize_payment`,
-`sign_mandate`, `approve_return`, or `confirm_delivery` tool.
+The agent may propose and track, but it can never consent. The MandateLoop MCP
+server deliberately has no `authorize_payment`, `sign_mandate`,
+`approve_return`, or `confirm_delivery` tool.
 
-## Run
+## Run locally
 
 ```bash
 python3 -m venv .venv
@@ -16,34 +16,44 @@ python3 -m venv .venv
 .venv/bin/uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
 
 # second terminal
-cd web && npm install && npm run dev -- --host 0.0.0.0
+cd web
+npm install
+npm run dev -- --host 0.0.0.0
 ```
 
 Open `http://localhost:5173/?demo=1`. See [demo.md](demo.md) for the rehearsed
-flow. MCP clients connect to `http://localhost:8000/mcp`.
+flows. MCP clients connect to `http://localhost:8000/mcp`.
 
 ## What is implemented
 
 - Frozen `contracts/` boundary and fixtures.
-- FastAPI API, streamable MCP mount, mock merchant catalog and SSE ledger feed.
-- PLN integer-grosze catalog: monitors and winter tire sets, with visibly
-  filtered 7-day-return and non-refundable alternatives.
-- Policy proxy with stable clauses, including revocation and cumulative mandate
-  budget. Every pass/block is recorded in the ledger.
-- Approval challenge binding: `sha256(canonical_json(body))`; full signing
-  assertion goes to the mandate/evidence bundle. `AUTH_MODE=demo_key` is the
-  reliable hackathon fallback, using an Ed25519 demo key with the same body
-  binding.
-- BLIK Lite out-of-band phone page, decline/retry fault, paczkomat notification,
-  deterministic wrong-item diff, human-authorized return, refund and evidence
-  download.
-- React/Vite interface with chat rail, lifecycle ledger, permission-slip
-  mandate panel, revoke control and demo controls.
+- FastAPI REST, internal merchant routes, SSE ledger, and streamable HTTP MCP.
+- PLN integer-grosze catalog with monitors and winter tire sets.
+- Stable policy clauses, revocation, and cumulative per-mandate budget checks.
+- Real WebAuthn platform-credential mode plus the reliable Ed25519 `demo_key`
+  fallback; both bind approval to `sha256(canonical_json(body))`.
+- BLIK Lite phone confirmation with a real QR code, decline/retry fault,
+  paczkomat notification, wrong-item diff, signed return, refund, and evidence.
+- React/Vite UI with chat rail, lifecycle feed, permission slip, revocation,
+  approval sheets, evidence download, and `?demo=1` controls.
+- Dockerfile for a single local/deployable process serving the built web app.
+
+## Signing modes
+
+`AUTH_MODE=demo_key` is the default and reliable hackathon fallback. Set
+`AUTH_MODE=webauthn` to enroll and authenticate with Touch ID/Windows Hello on
+`localhost`; user verification is required. Both modes store the complete
+assertion object in the evidence bundle.
 
 ## Demo limitations
 
-The BLIK rail, merchant and refund are local mocks. These are AP2-shaped
-mandates and an MPP-shaped payment handshake, not a claim of wire
-compatibility. The default signing mode is `demo_key` so the loop is reliable
-without an enrolled platform authenticator; the evidence shape remains the
-same for a real WebAuthn assertion.
+The BLIK rail, merchant, refund, and notifications are local mocks. These are
+AP2-shaped mandates and an MPP-shaped handshake, not a claim of wire
+compatibility. There is one demo user and no delegated mode.
+
+## Teammate prototype retained
+
+The original generic implementation remains under `src/opayai/`, including the
+notification, profile, webhook, email, and pitch additions merged from `main`.
+MandateLoop's contract-safe implementation lives in `backend/` and `web/`; the
+older MCP tools are retained for reference and are not mounted at `/mcp`.

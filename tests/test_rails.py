@@ -1,11 +1,11 @@
 from datetime import datetime
 from decimal import Decimal
 from opayai.types import CartMandate, CartItem, Money
-from opayai.rails import get_rail, MockX402Rail
+from opayai.rails import get_rail, MockAP2Rail
 import opayai.rails as rails_mod
 
 
-def _cart(rail="x402"):
+def _cart(rail="ap2"):
     return CartMandate(id="cm_1", intent_mandate_id="im_1",
                        items=[CartItem(offer_id="of_1", title="Mon", qty=1,
                                        unit_price=Money(amount=Decimal("289")))],
@@ -14,13 +14,13 @@ def _cart(rail="x402"):
                        signature="sig")
 
 
-def test_x402_charge_returns_receipt():
+def test_ap2_charge_returns_receipt():
     rails_mod.reset_rail_ids()
-    r = get_rail("x402")
-    rec = r.charge(_cart("x402"), now=datetime(2026, 7, 11, 9, 2))
-    assert rec.rail == "x402"
+    r = get_rail("ap2")
+    rec = r.charge(_cart("ap2"), now=datetime(2026, 7, 11, 9, 2))
+    assert rec.rail == "ap2"
     assert rec.amount.amount == Decimal("289")
-    assert rec.rail_reference.startswith("x402_")
+    assert rec.rail_reference.startswith("ap2_")
 
 
 def test_card_charge_returns_receipt():

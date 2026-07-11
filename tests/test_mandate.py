@@ -43,7 +43,7 @@ def test_cart_totals_and_signed(monkeypatch):
         SpendingLimit(per_transaction=Money(amount=Decimal("400")),
                       per_period=Money(amount=Decimal("1000"))),
         now=_now())
-    cart = propose_cart(im, [_offer()], rail="x402", rationale="fits", now=_now())
+    cart = propose_cart(im, [_offer()], rail="ap2", rationale="fits", now=_now())
     assert cart.total.amount == Decimal("289")
     assert cart.intent_mandate_id == im.id
     assert default_signer().verify(cart, cart.signature) is True

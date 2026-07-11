@@ -46,7 +46,7 @@ def test_cart_and_decision_build():
         items=[CartItem(offer_id="of_1", title="Mon", qty=1,
                         unit_price=Money(amount=Decimal("289")))],
         total=Money(amount=Decimal("289")),
-        selected_rail="x402", rationale="fits",
+        selected_rail="ap2", rationale="fits",
         created_at=datetime(2026, 7, 11, 9, 1, 0), signature="",
     )
     dec = PolicyDecision(

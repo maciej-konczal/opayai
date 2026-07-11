@@ -29,7 +29,7 @@ def _intent(max_total="300", per_txn="400", per_period="1000",
 def test_auto_approve_when_all_pass():
     im = _intent()
     offers = [_offer()]
-    cart = propose_cart(im, offers, "x402", "fits", now=datetime(2026, 7, 11, 9, 1))
+    cart = propose_cart(im, offers, "ap2", "fits", now=datetime(2026, 7, 11, 9, 1))
     dec = evaluate_policy(im, cart, {o.id: o for o in offers})
     assert dec.result == "AUTO_APPROVE"
 
@@ -37,7 +37,7 @@ def test_auto_approve_when_all_pass():
 def test_reject_over_budget():
     im = _intent(max_total="250")
     offers = [_offer(price="289")]
-    cart = propose_cart(im, offers, "x402", "fits", now=datetime(2026, 7, 11, 9, 1))
+    cart = propose_cart(im, offers, "ap2", "fits", now=datetime(2026, 7, 11, 9, 1))
     dec = evaluate_policy(im, cart, {o.id: o for o in offers})
     assert dec.result == "REJECT"
     assert any(c.rule == "budget" and not c.passed for c in dec.checks)
@@ -46,7 +46,7 @@ def test_reject_over_budget():
 def test_reject_missing_free_returns():
     im = _intent()
     offers = [_offer(free_returns=False)]
-    cart = propose_cart(im, offers, "x402", "fits", now=datetime(2026, 7, 11, 9, 1))
+    cart = propose_cart(im, offers, "ap2", "fits", now=datetime(2026, 7, 11, 9, 1))
     dec = evaluate_policy(im, cart, {o.id: o for o in offers})
     assert dec.result == "REJECT"
     assert any(c.rule == "hard_requirement:free_returns" and not c.passed for c in dec.checks)
@@ -55,7 +55,7 @@ def test_reject_missing_free_returns():
 def test_escalate_when_period_limit_exceeded():
     im = _intent(per_period="300")
     offers = [_offer(price="289")]
-    cart = propose_cart(im, offers, "x402", "fits", now=datetime(2026, 7, 11, 9, 1))
+    cart = propose_cart(im, offers, "ap2", "fits", now=datetime(2026, 7, 11, 9, 1))
     dec = evaluate_policy(im, cart, {o.id: o for o in offers}, period_spent=Decimal("50"))
     assert dec.result == "ESCALATE"
     assert any(c.rule == "spending_limit:per_period" and not c.passed for c in dec.checks)
@@ -65,7 +65,7 @@ def test_unknown_requirement_fails_closed():
     # A typo'd or hallucinated hard requirement must REJECT, not silently pass.
     im = _intent(reqs=("compt:macbook",))
     offers = [_offer()]
-    cart = propose_cart(im, offers, "x402", "fits", now=datetime(2026, 7, 11, 9, 1))
+    cart = propose_cart(im, offers, "ap2", "fits", now=datetime(2026, 7, 11, 9, 1))
     dec = evaluate_policy(im, cart, {o.id: o for o in offers})
     assert dec.result == "REJECT"
     assert any(c.rule == "hard_requirement:compt:macbook" and not c.passed for c in dec.checks)
@@ -85,7 +85,7 @@ def _intent_stepup(threshold):
 def test_step_up_required_over_threshold_even_when_within_limits():
     im = _intent_stepup("250")
     offers = [_offer(price="289")]
-    cart = propose_cart(im, offers, "x402", "fits", now=datetime(2026, 7, 11, 9, 1))
+    cart = propose_cart(im, offers, "ap2", "fits", now=datetime(2026, 7, 11, 9, 1))
     dec = evaluate_policy(im, cart, {o.id: o for o in offers})
     assert dec.result == "AUTO_APPROVE"   # within spending limits
     assert dec.step_up_required is True    # but over the step-up threshold
@@ -94,6 +94,6 @@ def test_step_up_required_over_threshold_even_when_within_limits():
 def test_no_step_up_under_threshold():
     im = _intent_stepup("500")
     offers = [_offer(price="289")]
-    cart = propose_cart(im, offers, "x402", "fits", now=datetime(2026, 7, 11, 9, 1))
+    cart = propose_cart(im, offers, "ap2", "fits", now=datetime(2026, 7, 11, 9, 1))
     dec = evaluate_policy(im, cart, {o.id: o for o in offers})
     assert dec.step_up_required is False

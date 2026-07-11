@@ -4,7 +4,7 @@ from typing import Callable
 import typer
 from rich.console import Console
 from rich.markup import escape
-from opayai import server, recommend
+from opayai import server, recommend, channels, notify
 from opayai.data import load_persona
 from opayai.events import bus
 from opayai.front_door import parse_prompt
@@ -42,7 +42,7 @@ def run_flow(prompt: str, approve: Callable[[dict, dict], bool],
     if not picked:
         return {"intent": intent, "cart": None, "decision": None, "order": None}
     cart = server.propose_cart(intent_id=intent["id"], offer_ids=picked,
-                               rail="x402", rationale="best rated within constraints")
+                               rail="ap2", rationale="best rated within constraints")
     decision = server.evaluate_policy(cart_id=cart["id"])
     if decision["result"] == "REJECT":
         return {"intent": intent, "cart": cart, "decision": decision, "order": None}
@@ -94,6 +94,14 @@ def main(prompt: str = typer.Argument(
     client = _maybe_client()
     console.print(f"[dim]front door: {'Claude' if client else 'offline heuristic'}[/dim]")
     bus.subscribe(_render)
+    # deliver proactive pings to any enabled channel (webhook / email / desktop)
+    _channels = channels.enabled_channels()
+
+    def _notify_sink(event):
+        n = notify.notification_for(event.model_dump(mode="json"))
+        if n and n["needs_action"]:
+            channels.deliver(n, _channels)
+    bus.subscribe(_notify_sink)
     result = run_flow(prompt, approve=approve, do_return=do_return, client=client,
                       step_up_threshold=step_up)
     console.rule("[bold green]RESULT")
