@@ -3,6 +3,7 @@ from decimal import Decimal
 from typing import Callable
 import typer
 from rich.console import Console
+from rich.markup import escape
 from opayai import server
 from opayai.data import load_persona
 from opayai.events import bus
@@ -29,12 +30,11 @@ def auto_pick(offers: list[dict], constraint: Constraint) -> list[str]:
 
 def _render(event) -> None:
     console.print(f"[dim]#{event.seq}[/dim] [bold cyan]{event.type}[/bold cyan] "
-                  f"[magenta]{event.actor}[/magenta] {event.payload}")
+                  f"[magenta]{event.actor}[/magenta] {escape(str(event.payload))}")
 
 
 def run_flow(prompt: str, approve: Callable[[dict, dict], bool],
              do_return: bool = False, client=None) -> dict:
-    bus.subscribe(_render)
     persona = load_persona()
     constraint, limit = parse_prompt(prompt, persona, client=client)
     intent = server.create_intent_mandate(
@@ -46,13 +46,18 @@ def run_flow(prompt: str, approve: Callable[[dict, dict], bool],
     offers = server.search_offers(category=constraint.category,
                                   max_price=str(constraint.max_total.amount))
     picked = auto_pick(offers, constraint)
+    if not picked:
+        return {"intent": intent, "cart": None, "decision": None, "order": None}
     cart = server.propose_cart(intent_id=intent["id"], offer_ids=picked,
                                rail="x402", rationale="best rated within constraints")
     decision = server.evaluate_policy(cart_id=cart["id"])
     if decision["result"] == "REJECT":
         return {"intent": intent, "cart": cart, "decision": decision, "order": None}
     if decision["result"] == "ESCALATE":
-        server.request_approval(cart_id=cart["id"], approved=approve(cart, decision))
+        approved = approve(cart, decision)
+        server.request_approval(cart_id=cart["id"], approved=approved)
+        if not approved:
+            return {"intent": intent, "cart": cart, "decision": decision, "order": None}
     order = server.execute_payment(cart_id=cart["id"])
     receipt_ref = order["receipt"]["rail_reference"]
     server.advance_order(order["id"]); server.advance_order(order["id"])  # -> DELIVERED
@@ -71,11 +76,14 @@ def main(prompt: str = typer.Argument(
         console.print(f"[yellow]APPROVAL NEEDED[/yellow] total={cart['total']['amount']} "
                       f"rail={cart['selected_rail']}")
         return typer.confirm("Approve this purchase?")
+    bus.subscribe(_render)
     result = run_flow(prompt, approve=approve, do_return=do_return, client=None)
     console.rule("[bold green]RESULT")
     if result["order"]:
         console.print(f"Order [bold]{result['order']['id']}[/bold] "
                       f"status=[green]{result['order']['status']}[/green]")
+    elif result["decision"] is None:
+        console.print("[red]No purchase[/red] - No matching offer found")
     else:
         console.print(f"[red]No purchase[/red] - policy {result['decision']['result']}")
 
