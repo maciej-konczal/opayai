@@ -12,9 +12,10 @@ the user should not have to repeat these instructions each time:
    limits). Do NOT ask the user for a passkey/step-up threshold - it defaults from
    their profile; only pass `step_up_threshold` if the user explicitly overrides it.
 2. **Present options and wait.** Call `suggest_offers` and show the user the ranked
-   shortlist with each option's `match_reason` (why it fits, or why not - over
-   budget / out of stock / etc.). Then STOP and let the user pick. Do NOT call
-   `propose_cart` or `execute_payment` until the user chooses.
+   shortlist. For each option cite BOTH its `match_reason` (why it qualifies, or why
+   not - over budget / out of stock / etc.) AND its `preferences` (how it fits the
+   user's stated preferences), so the choice is clearly personalized. Then STOP and
+   let the user pick. Do NOT call `propose_cart` or `execute_payment` until they choose.
    - Exception: if the user explicitly asks to buy autonomously ("just buy it",
      "complete the purchase", "pick the best one"), skip the shortlist and proceed.
 3. Always run `evaluate_policy` before `execute_payment`. Honor the gates:

@@ -17,10 +17,11 @@ from opayai import recommend, notify, channels, authorization, fulfillment, auth
 _INSTRUCTIONS = """opayai is an agent-commerce backbone. Default flow:
 1. Call create_intent_mandate FIRST (constraints, spending limits). You do NOT need to
    ask the user for a passkey/step-up threshold - it defaults from their profile.
-2. When the user is shopping, call suggest_offers and PRESENT the ranked options
-   (with their match_reason) to the user, then WAIT for them to choose. Do NOT call
-   propose_cart or execute_payment until the user picks - UNLESS the user explicitly
-   says to buy autonomously (e.g. "just buy it", "complete the purchase", "pick the best").
+2. When the user is shopping, call suggest_offers and PRESENT the ranked options,
+   citing each option's match_reason AND its preferences (how it fits the user's
+   stated preferences), then WAIT for them to choose. Do NOT call propose_cart or
+   execute_payment until the user picks - UNLESS the user explicitly says to buy
+   autonomously (e.g. "just buy it", "complete the purchase", "pick the best").
 3. Always run evaluate_policy, then call execute_payment. If execute_payment returns a
    PENDING status, the cart needs the user's approval or passkey step-up: you CANNOT
    authorize on their behalf. Tell the user to authorize at the returned authorize_url
@@ -104,18 +105,21 @@ def create_intent_mandate(user_id: str, category: str, max_total: str,
 def suggest_offers(intent_id: str, limit: int = 3) -> list[dict]:
     """Return a ranked shortlist of candidate offers for an intent, with reasons.
 
-    Each item has qualifies (bool) and match_reason (why it fits, or why not -
-    over budget / out of stock / missing free returns / not compatible). Present
-    this list to the user and let them pick which offer_id to buy BEFORE calling
-    propose_cart. This does not purchase anything. Searches the whole category
-    (including over-budget/out-of-stock options) so the user sees the tradeoffs.
+    Each item has: qualifies (bool); match_reason (why it fits, or why not - over
+    budget / out of stock / missing free returns / not compatible); and preferences
+    (a list of reasons it fits THIS user's stated preferences, e.g. "no dongles with
+    your MacBook", "you value quality"). When you present the shortlist, cite both -
+    why each option qualifies AND how it matches the user's preferences - so it is
+    clearly personalized. Let the user pick an offer_id before propose_cart. This
+    does not purchase anything; it searches the whole category (including
+    over-budget/out-of-stock options) so the user sees the tradeoffs.
     """
     intent = SESSION["intents"][intent_id]
     offers = data.search_offers(category=intent.constraint.category)
     for o in offers:
         SESSION["offers"][o.id] = o
     shortlist = recommend.suggest([o.model_dump(mode="json") for o in offers],
-                                  intent.constraint, limit)
+                                  intent.constraint, limit, persona=data.load_persona())
     bus.publish("suggestions.ready", "agent",
                 {"count": len(shortlist),
                  "qualifying": sum(1 for s in shortlist if s["qualifies"])},
