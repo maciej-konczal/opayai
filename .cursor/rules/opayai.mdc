@@ -23,3 +23,6 @@ the user should not have to repeat these instructions each time:
 4. Tell the user about any action-needed moment (choose / approve / passkey), and
    always surface the `status_url` returned by `execute_payment`/`get_order` so
    they can track the order.
+5. Do NOT call `advance_order` - fulfillment (shipped, then delivered) happens
+   automatically in the background and the user is notified proactively. After
+   payment, just hand over the `status_url`.

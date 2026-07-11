@@ -12,7 +12,7 @@ from opayai.mandate import create_intent_mandate as _create_intent, propose_cart
 from opayai.policy import evaluate_policy as _evaluate
 from opayai.orders import store as order_store
 from opayai.events import bus
-from opayai import stepup, recommend, notify, channels, authorization
+from opayai import stepup, recommend, notify, channels, authorization, fulfillment
 
 _INSTRUCTIONS = """opayai is an agent-commerce backbone. Default flow:
 1. Call create_intent_mandate FIRST (constraints, spending limits, optional step_up_threshold).
@@ -24,7 +24,9 @@ _INSTRUCTIONS = """opayai is an agent-commerce backbone. Default flow:
    call authorize_step_up (passkey). If the result is ESCALATE, ask the user, then
    request_approval. Never call execute_payment while a gate is unmet.
 4. Tell the user about any action-needed step (choose / approve / passkey) and surface
-   the status_url returned by execute_payment/get_order so they can track the order."""
+   the status_url returned by execute_payment/get_order so they can track the order.
+5. Do NOT call advance_order - fulfillment (shipped, then delivered) happens on its own
+   in the background, and the user is notified proactively. Just hand over the status_url."""
 
 app = FastMCP("opayai-mcp", instructions=_INSTRUCTIONS)
 
@@ -324,6 +326,7 @@ def _install_event_logging() -> None:
 def run() -> None:
     _install_event_logging()
     channels.install(bus)   # webhook = full event feed; desktop/email = action pings
+    fulfillment.start()     # orders ship/deliver on a timer -> proactive notifications
     app.run()
 
 

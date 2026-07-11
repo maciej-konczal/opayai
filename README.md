@@ -179,6 +179,8 @@ in pane 1 update live as you tell the agent to advance or return the order.
 | `ANTHROPIC_API_KEY` | unset | CLI front door: real Claude parse when set, offline heuristic otherwise |
 | `OPAYAI_MODEL` | `claude-sonnet-5` | CLI front door model id |
 | `OPAYAI_NOTIFY` | `1` | desktop ping on action-needed (macOS); `0` to disable |
+| `OPAYAI_FULFILLMENT` | `1` | background ticker advances orders over time; `0` to disable |
+| `OPAYAI_SHIP_SECONDS` / `OPAYAI_DELIVER_SECONDS` | `20` / `40` | seconds after placement -> SHIPPED / DELIVERED |
 | `OPAYAI_WEBHOOK_URL` | unset | POST each action-needed notification here (the Boski push seam) |
 | `RESEND_API_KEY` + `OPAYAI_NOTIFY_EMAIL` | unset | email an action-needed notification via Resend |
 | `OPAYAI_EMAIL_FROM` | `opayai <onboarding@resend.dev>` | email sender |
