@@ -129,6 +129,63 @@ Then in Cursor, ask the agent to buy something with a step-up threshold. Watch t
 event log fill in pane 2, click the `status_url` it returns, and see the order page
 in pane 1 update live as you tell the agent to advance or return the order.
 
+## 7. Quickstart D - the ElevenLabs voice agent
+
+Drive the same MCP tools by voice from an ElevenLabs Conversational-AI agent. The
+agent platform speaks to MCP servers over Streamable HTTP at a public URL, so we
+run the server in HTTP mode and expose it with a temporary `cloudflared` tunnel.
+
+### a. Start the server in HTTP mode
+
+```bash
+OPAYAI_TRANSPORT=http \
+OPAYAI_MCP_PORT=8787 \
+OPAYAI_MCP_TOKEN=pick-a-long-random-string \
+OPAYAI_WEBHOOK_URL=http://127.0.0.1:9099 \
+OPAYAI_EVENT_LOG="$PWD/opayai-events.jsonl" \
+  ./.venv/bin/python -m opayai.server
+```
+
+The MCP endpoint is now `http://0.0.0.0:8787/mcp`. `OPAYAI_MCP_TOKEN` is optional
+- if set, callers must send `Authorization: Bearer <token>`. Leave it unset to
+run open (the tunnel URL is unguessable). It runs on port 8787 so it does not
+collide with the web status site on 8000 - run both together for the full picture.
+
+### b. Expose it with a tunnel
+
+```bash
+# no account needed for a quick tunnel
+cloudflared tunnel --url http://127.0.0.1:8787
+```
+
+Copy the printed `https://<random>.trycloudflare.com` URL. Your MCP endpoint is
+that URL plus `/mcp`, e.g. `https://<random>.trycloudflare.com/mcp`.
+
+### c. Register the server in ElevenLabs
+
+In the ElevenLabs dashboard: your agent -> Tools -> add a custom MCP server:
+
+| field | value |
+|---|---|
+| Name | `opayai` |
+| Server URL | `https://<random>.trycloudflare.com/mcp` |
+| Secret Token | the same value you used for `OPAYAI_MCP_TOKEN` (omit if unset) |
+| Approval policy | No Approval |
+
+Use **No Approval** so ElevenLabs does not double-prompt. opayai keeps its own
+human-in-the-loop gate: when a cart needs approval or a passkey, `execute_payment`
+returns a PENDING status with an `authorize_url` on the web trusted surface. The
+voice agent reads that moment out loud and asks the user to authorize at the link,
+then calls `execute_payment` again to finish - the agent can never self-authorize.
+
+### d. Talk to it
+
+Say something like "buy me a good monitor under $300". The agent runs
+discover -> decide -> approve -> purchase -> track, speaking the choose and
+authorize moments aloud. Watch the same live event feed, status site, and
+`/profile` page as the CLI/Cursor demos. The tunnel URL is ephemeral, so
+re-register it in ElevenLabs whenever you restart the tunnel.
+
 ---
 
 ## MCP tools (the server surface)
@@ -178,6 +235,9 @@ in pane 1 update live as you tell the agent to advance or return the order.
 | `OPAYAI_AUTH_STORE` | `opayai-auth` next to the event log | shared approval/step-up proofs (server + web) |
 | `OPAYAI_WEB_PORT` | `8000` | web |
 | `OPAYAI_WEB_BASE` | `http://localhost:8000` | server (builds `status_url`) |
+| `OPAYAI_TRANSPORT` | `stdio` | server: `http` serves Streamable HTTP (for ElevenLabs); `stdio` for Cursor/hosts |
+| `OPAYAI_MCP_PORT` | `8787` | server (http transport): port for the `/mcp` endpoint |
+| `OPAYAI_MCP_TOKEN` | unset | server (http transport): require `Authorization: Bearer <token>` when set |
 | `ANTHROPIC_API_KEY` | unset | CLI front door: real Claude parse when set, offline heuristic otherwise |
 | `OPAYAI_MODEL` | `claude-sonnet-5` | CLI front door model id |
 | `OPAYAI_NOTIFY` | `1` | desktop ping on action-needed (macOS); `0` to disable |
