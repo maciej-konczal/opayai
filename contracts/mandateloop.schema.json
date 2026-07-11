@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mandateloop.local/contracts/mandateloop.schema.json",
+  "title": "MandateLoop shared objects",
+  "definitions": {
+    "Constraints": {
+      "type": "object",
+      "required": ["max_total", "currency", "categories", "requires_refundability", "min_return_window_days", "allowed_rails", "expiry"],
+      "properties": {
+        "max_total": {"type": "integer", "description": "PLN grosze"},
+        "currency": {"const": "PLN"},
+        "categories": {"type": "array", "items": {"type": "string"}},
+        "requires_refundability": {"type": "boolean"},
+        "min_return_window_days": {"type": "integer"},
+        "deliver_by": {"type": ["string", "null"]},
+        "allowed_rails": {"type": "array", "items": {"enum": ["blik_lite", "card_spt_stub", "usdc_stub"]}},
+        "expiry": {"type": "string"}
+      }
+    },
+    "OrderEvent": {
+      "type": "object",
+      "required": ["seq", "ts", "actor", "type", "payload", "prev_hash", "hash"],
+      "properties": {
+        "seq": {"type": "integer"}, "ts": {"type": "string"}, "actor": {"type": "string"},
+        "type": {"type": "string"}, "payload": {"type": "object"},
+        "prev_hash": {"type": "string"}, "hash": {"type": "string"}
+      }
+    }
+  }
+}

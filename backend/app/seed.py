@@ -1,0 +1,13 @@
+from .models import Offer
+
+
+OFFERS = [
+    Offer(sku="MON-27-USBC", title="Nord 27\u2033 4K USB-C", category="monitors", price=114900, stock=8, delivery_method="paczkomat", delivery_estimate_days=2, return_policy={"window_days": 30, "restocking_fee": 0, "method": "paczkomat"}, refundable=True, attributes={"size_inches": 27, "ports": ["USB-C", "HDMI"], "resolution": "4K"}),
+    Offer(sku="MON-27-BASIC", title="Pixel 27\u2033 QHD", category="monitors", price=84900, stock=12, delivery_method="paczkomat", delivery_estimate_days=1, return_policy={"window_days": 7, "restocking_fee": 0, "method": "paczkomat"}, refundable=True, attributes={"size_inches": 27, "ports": ["HDMI"], "resolution": "QHD"}),
+    Offer(sku="MON-34-ULTRA", title="Vista 34\u2033 Ultrawide", category="monitors", price=299900, stock=3, delivery_method="courier", delivery_estimate_days=3, return_policy={"window_days": 30, "restocking_fee": 0, "method": "courier"}, refundable=True, attributes={"size_inches": 34, "ports": ["USB-C", "HDMI"]}),
+    Offer(sku="MON-24-OFFICE", title="Office 24\u2033 FHD", category="monitors", price=59900, stock=0, delivery_method="paczkomat", delivery_estimate_days=2, return_policy={"window_days": 14, "restocking_fee": 0, "method": "paczkomat"}, refundable=True, attributes={"size_inches": 24, "ports": ["HDMI"]}),
+    Offer(sku="TIR-205-WINTER", title="Frostline 205/55 R16 · 4 szt.", category="winter_tires", price=149900, stock=9, delivery_method="paczkomat", delivery_estimate_days=2, return_policy={"window_days": 30, "restocking_fee": 0, "method": "paczkomat"}, refundable=True, attributes={"size": "205/55 R16", "season": "winter"}),
+    Offer(sku="TIR-205-VALUE", title="Snowrun 205/55 R16 · 4 szt.", category="winter_tires", price=129900, stock=14, delivery_method="paczkomat", delivery_estimate_days=1, return_policy={"window_days": 7, "restocking_fee": 0, "method": "paczkomat"}, refundable=True, attributes={"size": "205/55 R16", "season": "winter"}),
+    Offer(sku="TIR-225-PRO", title="AlpinePro 225/45 R17 · 4 szt.", category="winter_tires", price=189900, stock=7, delivery_method="courier", delivery_estimate_days=3, return_policy={"window_days": 30, "restocking_fee": 0, "method": "courier"}, refundable=True, attributes={"size": "225/45 R17", "season": "winter"}),
+    Offer(sku="TIR-205-CLEAR", title="Clearance 205/55 R16 · 4 szt.", category="winter_tires", price=99900, stock=4, delivery_method="paczkomat", delivery_estimate_days=2, return_policy={"window_days": 0, "restocking_fee": 0, "method": "none"}, refundable=False, attributes={"size": "205/55 R16", "season": "winter"}),
+]

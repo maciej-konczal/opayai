@@ -6,3 +6,6 @@ dist/
 *.egg-info/
 .superpowers/
 opayai-events.jsonl
+web/node_modules/
+web/dist/
+.mandateloop/

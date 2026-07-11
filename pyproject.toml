@@ -3,8 +3,14 @@ name = "opayai"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
     "mcp>=1.2.0",
     "pydantic>=2.6",
+    "sse-starlette>=2.1",
+    "python-multipart>=0.0.9",
+    "python-dotenv>=1.0",
+    "webauthn>=2.2",
     "pynacl>=1.5",
     "anthropic>=0.40",
     "rich>=13.7",
