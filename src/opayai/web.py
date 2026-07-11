@@ -13,6 +13,7 @@ import html
 import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from opayai import notify
 
 
 def log_path() -> str:
@@ -112,6 +113,9 @@ td.k{{color:#8b949e;width:120px}}
 .ev .seq{{color:#6e7681;width:26px}} .ev .type{{color:#58a6ff;width:190px}}
 .ev .actor{{color:#a371f7;width:70px}} .ev .pl{{color:#8b949e;flex:1;word-break:break-word}}
 .muted{{color:#6e7681}}
+.note{{border:1px solid #21262d;background:#161b22;border-radius:8px;padding:9px 12px;margin:7px 0;font-size:13px}}
+.note.act{{border-color:#8a5a00;background:#221a08}}
+.note .t{{font-weight:640}} .note.act .t{{color:#f0b429}} .note .b{{color:#9aa4b2;margin-left:6px}}
 </style></head><body>{brand}{body}</body></html>"""
 
 
@@ -156,6 +160,16 @@ def render_order(events: list[dict], order_id: str) -> str:
         + row("Budget", s.get("max_total"))
         + row("Intent", s.get("intent"))
         + '</table></div>')
+    notes = notify.notifications(d["trail"])
+    notes_html = ""
+    if notes:
+        def note(n):
+            cls = "note act" if n["needs_action"] else "note"
+            return (f'<div class="{cls}"><span class=t>{html.escape(n["title"])}</span>'
+                    f'<span class=b>{html.escape(n["body"])}</span></div>')
+        ordered = ([n for n in notes if n["needs_action"]]
+                   + [n for n in notes if not n["needs_action"]])
+        notes_html = "<h2>Notifications</h2>" + "".join(note(n) for n in ordered)
     evs = []
     for e in d["trail"]:
         evs.append(
@@ -163,7 +177,8 @@ def render_order(events: list[dict], order_id: str) -> str:
             f'<span class=type>{html.escape(e.get("type",""))}</span>'
             f'<span class=actor>{html.escape(e.get("actor",""))}</span>'
             f'<span class=pl>{html.escape(json.dumps(e.get("payload",{})))}</span></div>')
-    body = summary_html + "<h2>Signed audit trail</h2>" + "".join(evs) + '<p><a href="/">All orders</a></p>'
+    body = (summary_html + notes_html + "<h2>Signed audit trail</h2>"
+            + "".join(evs) + '<p><a href="/">All orders</a></p>')
     return _page(f"Order {order_id}", body)
 
 
