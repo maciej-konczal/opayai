@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from .api import router as api_router
 from .mcp_server import create_mcp
@@ -16,10 +18,19 @@ from .policy import PolicyBlock
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="MandateLoop", version="0.3.0")
-    app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
     state_dir = Path(os.getenv("MANDATELOOP_STATE", ".mandateloop"))
     service = MandateLoopService(state_dir)
+    mcp = create_mcp(service)
+    mcp_http_app = mcp.streamable_http_app()
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        print(f"MandateLoop BLIK phone page is reachable at http://{lan_ip()}:8000/pay/blik/<session_id>")
+        async with mcp.session_manager.run():
+            yield
+
+    app = FastAPI(title="MandateLoop", version="0.4.0", lifespan=lifespan)
+    app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
     app.state.service = service
 
     @app.exception_handler(PolicyBlock)
@@ -28,8 +39,10 @@ def create_app() -> FastAPI:
 
     app.include_router(api_router)
     app.include_router(merchant_router)
-    mcp = create_mcp(service)
-    app.mount("/mcp", mcp.streamable_http_app())
+    # FastMCP's child app already owns the `/mcp` Route. Extending that route
+    # into FastAPI keeps the public path exact and the parent lifespan runs its
+    # session manager.
+    app.router.routes.extend(mcp_http_app.routes)
 
     @app.get("/pay/blik/{session_id}", response_class=HTMLResponse)
     def blik_page(session_id: str):
@@ -46,12 +59,11 @@ def create_app() -> FastAPI:
         purchase = service.blik_decision(session_id, decision)
         return HTMLResponse(f"<meta name='viewport' content='width=device-width'><body style='font-family:system-ui;padding:32px'><h2>{'Płatność potwierdzona' if purchase.order_status == 'paid' else 'Płatność odrzucona'}</h2><p>Możesz zamknąć tę stronę i wrócić do MandateLoop.</p></body>")
 
+    web_dist = Path(__file__).resolve().parents[2] / "web" / "dist"
+    if web_dist.exists():
+        app.mount("/", StaticFiles(directory=web_dist, html=True), name="web")
+
     return app
 
 
 app = create_app()
-
-
-@app.on_event("startup")
-async def show_lan_ip() -> None:
-    print(f"MandateLoop BLIK phone page is reachable at http://{lan_ip()}:8000/pay/blik/<session_id>")

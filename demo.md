@@ -15,6 +15,17 @@ cd web && npm install && npm run dev -- --host 0.0.0.0
 Open `http://localhost:5173/?demo=1`. The backend prints its LAN address for
 the BLIK phone-confirmation page.
 
+The default `AUTH_MODE=demo_key` is the deterministic fallback. To rehearse
+Touch ID/Windows Hello, start the backend with:
+
+```bash
+AUTH_MODE=webauthn WEBAUTHN_ORIGIN=http://localhost:5173 \
+  uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+```
+
+Use `localhost` for the laptop webapp. The BLIK sheet contains a real QR code;
+only the payment confirmation page should be opened on the phone.
+
 ## A — web purchase
 
 1. Submit: `Kup mi zestaw opon zimowych 205/55 R16 do 1600 zł, min. 14 dni na zwrot.`
@@ -46,3 +57,15 @@ Connect an MCP client to the streamable HTTP endpoint at
 `http://localhost:8000/mcp`. Its only purchase tool, `request_purchase`,
 returns `awaiting_human_authorization`; approval, payment and return consent do
 not exist in the MCP surface.
+
+## Single-process package
+
+Once Docker Desktop is running:
+
+```bash
+docker build -t mandateloop:demo .
+docker run --rm -p 8000:8000 mandateloop:demo
+```
+
+Open `http://localhost:8000/?demo=1`; the FastAPI process serves the built React
+app, APIs, BLIK page, and MCP endpoint.

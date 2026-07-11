@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
-import { api } from './api'
+import { useEffect, useState } from 'react'
+import { QRCodeSVG } from 'qrcode.react'
+import { api, approveContext } from './api'
 import type { Intent, LedgerEvent, Offer, Purchase } from './types'
 
 const money = (grosze: number) => new Intl.NumberFormat('pl-PL', {style: 'currency', currency: 'PLN'}).format(grosze / 100)
@@ -17,7 +18,12 @@ export function App() {
   const [notice, setNotice] = useState('Wpisz zamiar. Agent przygotuje propozycję; podpis należy do Ciebie.')
   const demo = new URLSearchParams(location.search).get('demo') === '1'
 
-  useEffect(() => api.events(event => setEvents(previous => previous.some(e => e.seq === event.seq) ? previous : [...previous, event])), [])
+  useEffect(() => api.events(event => {
+    setEvents(previous => previous.some(e => e.seq === event.seq) ? previous : [...previous, event])
+    if (event.type === 'notification' && 'Notification' in window && Notification.permission === 'granted') {
+      new Notification('MandateLoop', {body: String(event.payload.message ?? 'Nowe zdarzenie zakupu')})
+    }
+  }), [])
   useEffect(() => { if (intent?.status === 'open') void loadProducts(intent.id) }, [intent?.id, intent?.status])
 
   async function loadProducts(id = intent?.id) {
@@ -25,11 +31,14 @@ export function App() {
     setOffers(data.offers); setFiltered(data.filtered_out)
   }
   async function draft() {
-    try { const next = await api.draft(prompt); setIntent(next); setSheet('intent'); setNotice('Mandat jest szkicem. Sprawdź warunki i podpisz go lokalnie.') } catch (error) { setNotice(String(error)) }
+    try {
+      if ('Notification' in window && Notification.permission === 'default') void Notification.requestPermission()
+      const next = await api.draft(prompt); setIntent(next); setSheet('intent'); setNotice('Mandat jest szkicem. Sprawdź warunki i podpisz go lokalnie.')
+    } catch (error) { setNotice(String(error)) }
   }
   async function sign(id: string, type: 'intent' | 'cart' | 'resolution') {
     try {
-      await api.signOptions(id, type); await api.verify(id, type)
+      await approveContext(id, type)
       if (type === 'intent') { const next = {...intent!, status: 'open' as const}; setIntent(next); await loadProducts(next.id); setNotice('Mandat otwarty. Oferty zostały odfiltrowane przez politykę.') }
       if (type === 'cart') { await refreshPurchase(); setNotice('Koszyk związany z Twoim podpisem. Wybierz BLIK.') }
       if (type === 'resolution') { await refreshPurchase(); setNotice('Zwrot zatwierdzony. Kod nadania pojawił się w powiadomieniach.') }
@@ -60,6 +69,6 @@ export function App() {
       <aside className="mandate panel"><p className="eyebrow">03 · Permission slip</p>{intent ? <><div className={`seal ${intent.status}`}><span>{intent.status === 'open' ? 'OTWARTY' : intent.status.toUpperCase()}</span></div><h2>{intent.description}</h2><dl><div><dt>Kategorie</dt><dd>{intent.constraints.categories.join(', ')}</dd></div><div><dt>Zwrot</dt><dd>min. {intent.constraints.min_return_window_days} dni</dd></div><div><dt>Rail</dt><dd>BLIK lite</dd></div><div><dt>Wygasa</dt><dd>{new Date(intent.constraints.expiry).toLocaleString('pl-PL')}</dd></div></dl><div className="budget"><div><span>Wydano</span><b>{money(intent.spent_total)} / {money(intent.constraints.max_total)}</b></div><i><i style={{width: `${progress}%`}}/></i></div><button className="revoke" onClick={async () => { const revoked = await api.revoke(intent.id); setIntent(revoked); setNotice('Mandat cofnięty. Kolejne działania agentów zostaną zablokowane.') }}>COFNIJ MANDAT</button></> : <p className="empty">Podpisany mandat będzie tutaj czytelny z drugiego końca pokoju.</p>}
       <div className="notifications"><p className="eyebrow">Powiadomienia</p>{events.filter(event => event.type === 'notification').slice(-4).reverse().map(event => <p key={event.seq}>{event.payload.message as string}</p>)}</div>{demo && purchase?.order?.id && <div className="demo"><p className="eyebrow">Fault injection</p><button onClick={() => api.fault(purchase.order!.id, 'wrong_item')}>Wrong item</button><button onClick={() => api.fault(purchase.order!.id, 'decline_payment')}>Decline BLIK</button></div>}</aside>
     </section>
-    {sheet && <div className="backdrop" role="dialog" aria-modal="true"><section className="sheet"><button className="close" onClick={() => setSheet(null)}>×</button>{sheet === 'intent' && intent && <><p className="eyebrow">Human authorization</p><h2>Podpisujesz zamiar,<br/>nie pusty czek.</h2><p>Podpis jest związany z ograniczeniami: {money(intent.constraints.max_total)}, {intent.constraints.categories.join(', ')}, zwrot min. {intent.constraints.min_return_window_days} dni.</p><button className="ink-button" onClick={() => sign(intent.id, 'intent')}>Podpisz mandat demo ↗</button></>}{sheet === 'cart' && purchase && <><p className="eyebrow">Exact-cart approval</p><h2>Ten koszyk,<br/>ta cena.</h2><pre>{JSON.stringify(purchase.proposal, null, 2)}</pre><button className="ink-button" onClick={() => sign(purchase.id, 'cart')}>Podpisz koszyk demo ↗</button><button className="rail live" onClick={chooseBlik}>BLIK lite <span>aktywny</span></button><button className="rail" disabled>Card <span>slot</span></button><button className="rail" disabled>USDC <span>slot</span></button></>}{sheet === 'payment' && <><p className="eyebrow">Out-of-band payment</p><h2>Potwierdź BLIK<br/>na telefonie.</h2><div className="qr">BLIK<br/><b>{payUrl?.split('/').pop()}</b></div><a className="pay-link" href={payUrl ?? '#'} target="_blank">Otwórz stronę potwierdzenia ↗</a><button className="quiet" onClick={async () => { await refreshPurchase(); setSheet(null) }}>Wróciłem z telefonu</button></>}{sheet === 'resolution' && purchase && <><p className="eyebrow">Resolution approval</p><h2>Niezgodność<br/>jest dowodem.</h2><div className="diff"><div><small>OCZEKIWANO</small><pre>{JSON.stringify(purchase.exception?.evidence.expected, null, 2)}</pre></div><div><small>ODEBRANO</small><pre>{JSON.stringify(purchase.exception?.evidence.observed, null, 2)}</pre></div></div><button className="danger-button" onClick={() => sign(purchase.id, 'resolution')}>Podpisz pełny zwrot</button></>}{sheet === 'evidence' && purchase && <><p className="eyebrow">Close-out receipt</p><h2>Evidence bundle.</h2><p>Podpisane mandaty, pełny hash-chain, próby płatności, diff oraz atrybucja agenta w jednym JSON-ie.</p><button className="ink-button" onClick={downloadEvidence}>Pobierz dowód .json</button></>}</section></div>}
+    {sheet && <div className="backdrop" role="dialog" aria-modal="true"><section className="sheet"><button className="close" onClick={() => setSheet(null)}>×</button>{sheet === 'intent' && intent && <><p className="eyebrow">Human authorization</p><h2>Podpisujesz zamiar,<br/>nie pusty czek.</h2><p>Podpis jest związany z ograniczeniami: {money(intent.constraints.max_total)}, {intent.constraints.categories.join(', ')}, zwrot min. {intent.constraints.min_return_window_days} dni.</p><button className="ink-button" onClick={() => sign(intent.id, 'intent')}>Podpisz lokalnie ↗</button></>}{sheet === 'cart' && purchase && <><p className="eyebrow">Exact-cart approval</p><h2>Ten koszyk,<br/>ta cena.</h2><pre>{JSON.stringify(purchase.proposal, null, 2)}</pre><button className="ink-button" onClick={() => sign(purchase.id, 'cart')}>Podpisz koszyk ↗</button><button className="rail live" onClick={chooseBlik}>BLIK lite <span>aktywny</span></button><button className="rail" disabled>Card <span>slot</span></button><button className="rail" disabled>USDC <span>slot</span></button></>}{sheet === 'payment' && <><p className="eyebrow">Out-of-band payment</p><h2>Potwierdź BLIK<br/>na telefonie.</h2><div className="qr">{payUrl ? <QRCodeSVG value={payUrl} size={128} bgColor="#e9e8dd" fgColor="#172018" level="M"/> : null}<b>{payUrl?.split('/').pop()}</b></div><a className="pay-link" href={payUrl ?? '#'} target="_blank" rel="noreferrer">Otwórz stronę potwierdzenia ↗</a><button className="quiet" onClick={async () => { await refreshPurchase(); setSheet(null) }}>Wróciłem z telefonu</button></>}{sheet === 'resolution' && purchase && <><p className="eyebrow">Resolution approval</p><h2>Niezgodność<br/>jest dowodem.</h2><div className="diff"><div><small>OCZEKIWANO</small><pre>{JSON.stringify(purchase.exception?.evidence.expected, null, 2)}</pre></div><div><small>ODEBRANO</small><pre>{JSON.stringify(purchase.exception?.evidence.observed, null, 2)}</pre></div></div><button className="danger-button" onClick={() => sign(purchase.id, 'resolution')}>Podpisz pełny zwrot</button></>}{sheet === 'evidence' && purchase && <><p className="eyebrow">Close-out receipt</p><h2>Evidence bundle.</h2><p>Podpisane mandaty, pełny hash-chain, próby płatności, diff oraz atrybucja agenta w jednym JSON-ie.</p><button className="ink-button" onClick={downloadEvidence}>Pobierz dowód .json</button></>}</section></div>}
   </main>
 }

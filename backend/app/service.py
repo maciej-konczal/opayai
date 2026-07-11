@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import base64
+import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from .crypto import challenge_b64, demo_assertion, now_iso, verify_demo_assertion
+from .crypto import (canonical_json, challenge_b64, challenge_for, demo_assertion,
+                     now_iso, verify_demo_assertion)
 from .ledger import Ledger
 from .models import (CartMandate, Constraints, EvidenceBundle, IntentMandate,
                      LineItem, Offer, PaymentMandate, Purchase, PurchaseException,
@@ -14,6 +18,16 @@ from .rails import BlikLiteRail, CardSptStub, RailNotImplemented, UsdcStub, lan_
 from .seed import OFFERS
 from .store import Store
 
+from webauthn import (generate_authentication_options, generate_registration_options,
+                      options_to_json, verify_authentication_response,
+                      verify_registration_response)
+from webauthn.helpers import bytes_to_base64url
+from webauthn.helpers.structs import (AuthenticatorAttachment,
+                                     AuthenticatorSelectionCriteria,
+                                     PublicKeyCredentialDescriptor,
+                                     ResidentKeyRequirement,
+                                     UserVerificationRequirement)
+
 
 class MandateLoopService:
     def __init__(self, state_dir: Path):
@@ -21,6 +35,12 @@ class MandateLoopService:
         self.ledger = Ledger(state_dir / "ledger.jsonl")
         self.offers = {offer.sku: offer for offer in OFFERS}
         self.rails = {"blik_lite": BlikLiteRail(), "card_spt_stub": CardSptStub(), "usdc_stub": UsdcStub()}
+        self.auth_mode = os.getenv("AUTH_MODE", "demo_key").lower()
+        if self.auth_mode not in {"demo_key", "webauthn"}:
+            raise ValueError("AUTH_MODE must be demo_key or webauthn")
+        self.rp_id = os.getenv("WEBAUTHN_RP_ID", "localhost")
+        configured_origin = os.getenv("WEBAUTHN_ORIGIN")
+        self.expected_origin = configured_origin or ["http://localhost:5173", "http://localhost:8000"]
 
     def _event(self, actor: str, type_: str, purchase_id: str | None = None, **payload: Any) -> None:
         if purchase_id:
@@ -78,8 +98,59 @@ class MandateLoopService:
         body, intent_id, purchase_id = self._signing_body(context_id, context_type)
         context = {"body": body, "context_type": context_type, "intent_id": intent_id, "purchase_id": purchase_id}
         self.store.signing_contexts[f"{context_type}:{context_id}"] = context
-        return {"auth_mode": "demo_key", "challenge": challenge_b64(body), "context_id": context_id,
-                "context_type": context_type, "body": body, "user_verification": "required"}
+        if self.auth_mode == "demo_key":
+            return {"auth_mode": "demo_key", "challenge": challenge_b64(body), "context_id": context_id,
+                    "context_type": context_type, "body": body, "user_verification": "required"}
+        if not self.store.webauthn_credentials:
+            return {"auth_mode": "webauthn", "registration_required": True,
+                    "context_id": context_id, "context_type": context_type}
+        descriptors = [PublicKeyCredentialDescriptor(id=self._b64decode(value["credential_id"]))
+                       for value in self.store.webauthn_credentials.values()]
+        options = generate_authentication_options(
+            rp_id=self.rp_id, challenge=challenge_for(body), allow_credentials=descriptors,
+            user_verification=UserVerificationRequirement.REQUIRED)
+        return {"auth_mode": "webauthn", "registration_required": False,
+                "options": json.loads(options_to_json(options)), "context_id": context_id,
+                "context_type": context_type, "body": body}
+
+    def registration_options(self) -> dict[str, Any]:
+        if self.auth_mode == "demo_key":
+            return {"auth_mode": "demo_key", "credential_id": "demo-device",
+                    "message": "Demo key is active; no platform enrollment is needed."}
+        options = generate_registration_options(
+            rp_id=self.rp_id, rp_name="MandateLoop", user_name="user_demo",
+            user_id=b"user_demo", user_display_name="MandateLoop Demo User",
+            authenticator_selection=AuthenticatorSelectionCriteria(
+                authenticator_attachment=AuthenticatorAttachment.PLATFORM,
+                resident_key=ResidentKeyRequirement.PREFERRED,
+                user_verification=UserVerificationRequirement.REQUIRED),
+            exclude_credentials=[PublicKeyCredentialDescriptor(id=self._b64decode(value["credential_id"]))
+                                 for value in self.store.webauthn_credentials.values()])
+        self.store.registration_challenge = base64.b64encode(options.challenge).decode()
+        return {"auth_mode": "webauthn", "options": json.loads(options_to_json(options))}
+
+    def verify_registration(self, credential: dict[str, Any]) -> dict[str, Any]:
+        if self.auth_mode == "demo_key":
+            return {"verified": True, "credential_id": "demo-device", "auth_mode": "demo_key"}
+        if not self.store.registration_challenge:
+            raise ValueError("Registration challenge expired; request new options.")
+        verification = verify_registration_response(
+            credential=credential,
+            expected_challenge=base64.b64decode(self.store.registration_challenge),
+            expected_rp_id=self.rp_id, expected_origin=self.expected_origin,
+            require_user_verification=True)
+        credential_id = bytes_to_base64url(verification.credential_id)
+        self.store.webauthn_credentials[credential_id] = {
+            "credential_id": credential_id,
+            "public_key_b64": base64.b64encode(verification.credential_public_key).decode(),
+            "sign_count": verification.sign_count,
+            "aaguid": verification.aaguid,
+        }
+        self.store.registration_challenge = None
+        self.store.save()
+        self._event("user", "webauthn_registered", credential_id=credential_id,
+                    user_verified=verification.user_verified)
+        return {"verified": True, "credential_id": credential_id, "auth_mode": "webauthn"}
 
     def verify_signing(self, context_id: str, context_type: str, assertion: dict[str, Any]) -> WebAuthnSigning:
         key = f"{context_type}:{context_id}"
@@ -87,10 +158,27 @@ class MandateLoopService:
         if not context:
             raise ValueError("Signing context expired; request a new challenge.")
         body = context["body"]
-        supplied = assertion.get("assertion_b64") or demo_assertion(body)
-        verified = verify_demo_assertion(body, supplied)
-        signing = WebAuthnSigning(credential_id=assertion.get("credential_id", "demo-device"),
-                                  assertion_b64=supplied, verified=verified, signed_at=now_iso())
+        if self.auth_mode == "demo_key":
+            supplied = assertion.get("assertion_b64") or demo_assertion(body)
+            verified = verify_demo_assertion(body, supplied)
+            signing = WebAuthnSigning(method="demo_key", credential_id=assertion.get("credential_id", "demo-device"),
+                                      assertion_b64=supplied, verified=verified, signed_at=now_iso())
+        else:
+            credential_id = assertion.get("id", "")
+            stored = self.store.webauthn_credentials.get(credential_id)
+            if not stored:
+                raise ValueError("Unknown WebAuthn credential.")
+            verification = verify_authentication_response(
+                credential=assertion, expected_challenge=challenge_for(body),
+                expected_rp_id=self.rp_id, expected_origin=self.expected_origin,
+                credential_public_key=base64.b64decode(stored["public_key_b64"]),
+                credential_current_sign_count=stored["sign_count"],
+                require_user_verification=True)
+            stored["sign_count"] = verification.new_sign_count
+            supplied = base64.b64encode(canonical_json(assertion).encode()).decode()
+            verified = verification.user_verified
+            signing = WebAuthnSigning(method="webauthn", credential_id=credential_id,
+                                      assertion_b64=supplied, verified=verified, signed_at=now_iso())
         if not verified:
             raise ValueError("Approval assertion did not verify.")
         if context_type == "intent":
@@ -115,6 +203,10 @@ class MandateLoopService:
             raise ValueError("Unsupported signing context.")
         self.store.save()
         return signing
+
+    @staticmethod
+    def _b64decode(value: str) -> bytes:
+        return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
 
     def _signing_body(self, context_id: str, context_type: str) -> tuple[dict[str, Any], str, str | None]:
         if context_type == "intent":
@@ -238,6 +330,45 @@ class MandateLoopService:
         self.store.save()
         return {"payment": previous.model_dump(mode="json"), "pay_url": f"{base_url}/pay/blik/{session.id}"}
 
+    def merchant_confirm_checkout(self, purchase_id: str) -> dict[str, Any]:
+        purchase = self.store.purchases[purchase_id]
+        intent = self.store.intents[purchase.intent_id]
+        if not purchase.cart or not purchase.cart.signing or not purchase.cart.signing.verified:
+            raise PolicyBlock("cart_not_signed", "Merchant requires a verified human cart signature.")
+        if not purchase.payment or purchase.payment.status != "succeeded":
+            raise PolicyBlock("payment_not_succeeded", "Merchant requires a succeeded payment mandate.")
+        if purchase.cart.totals != purchase.proposal.get("totals"):
+            raise PolicyBlock("proposal_drift", "Signed cart totals differ from the checkout proposal.")
+        offer = self._find_offer(purchase.cart.line_items[0].sku)
+        # Budget was consumed exactly once when BLIK succeeded; confirmation
+        # re-checks category/rail without charging the cumulative limit again.
+        self._policy(intent, "merchant_checkout_confirm", purchase.id, offer,
+                     rail=purchase.payment.rail)
+        if not purchase.order:
+            raise ValueError("Payment succeeded but no merchant order was created.")
+        return {"proposal_id": purchase.id, "order": purchase.order,
+                "cart_signature_verified": True, "payment_verified": True}
+
+    def merchant_create_return(self, purchase_id: str, reason: str) -> dict[str, Any]:
+        purchase = self.store.purchases[purchase_id]
+        intent = self.store.intents[purchase.intent_id]
+        signing = (purchase.resolution or {}).get("signing")
+        if not signing or not signing.get("verified"):
+            raise PolicyBlock("resolution_not_signed", "A human must sign the resolution before return creation.")
+        self._policy(intent, "merchant_return", purchase.id)
+        if purchase.order_status not in {"return_requested", "return_in_transit"}:
+            raise PolicyBlock("return_not_available", "Order is not in an approved return state.")
+        return {"return_id": f"ret_{purchase.id}", "reason": reason,
+                "locker_dropoff_code": "ML-RETURN-482913"}
+
+    def merchant_refund(self, purchase_id: str) -> dict[str, Any]:
+        purchase = self.store.purchases[purchase_id]
+        intent = self.store.intents[purchase.intent_id]
+        self._policy(intent, "merchant_refund", purchase.id)
+        if purchase.order_status != "return_in_transit":
+            raise PolicyBlock("refund_not_available", "Refund requires a returned parcel in transit.")
+        return self._issue_refund(purchase)
+
     def advance(self, order_id: str) -> Purchase:
         purchase = next(p for p in self.store.purchases.values() if p.order and p.order["id"] == order_id)
         if purchase.order_status == "paid":
@@ -255,18 +386,23 @@ class MandateLoopService:
             purchase.order_status, purchase.status = "return_in_transit", "resolving"
             self._event("merchant", "status_change", purchase.id, order_status="return_in_transit")
         elif purchase.order_status == "return_in_transit":
-            assert purchase.payment
-            refund = self.rails["blik_lite"].refund(purchase.payment.id)
-            purchase.payment.status = "refunded"
-            purchase.order_status, purchase.status = "closed_refunded", "closed"
-            purchase.order["status"] = "closed_refunded"
-            if purchase.exception:
-                purchase.exception.resolution_status = "resolved"
-            self._event("rail", "refund_issued", purchase.id, **refund, amount=purchase.payment.amount)
+            self._issue_refund(purchase)
         else:
             raise ValueError(f"No demo transition from {purchase.order_status}")
         self.store.save()
         return purchase
+
+    def _issue_refund(self, purchase: Purchase) -> dict[str, Any]:
+        assert purchase.payment and purchase.order
+        refund = self.rails["blik_lite"].refund(purchase.payment.id)
+        purchase.payment.status = "refunded"
+        purchase.order_status, purchase.status = "closed_refunded", "closed"
+        purchase.order["status"] = "closed_refunded"
+        if purchase.exception:
+            purchase.exception.resolution_status = "resolved"
+        self._event("rail", "refund_issued", purchase.id, **refund, amount=purchase.payment.amount)
+        self.store.save()
+        return {**refund, "amount": purchase.payment.amount, "currency": "PLN"}
 
     def _verify_delivery(self, purchase: Purchase) -> None:
         assert purchase.cart and purchase.order

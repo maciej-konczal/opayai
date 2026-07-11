@@ -1,0 +1,20 @@
+.qr {
+  width: 168px;
+  min-height: 184px;
+  margin: 25px auto;
+  padding: 12px;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  color: #172018;
+  background: #e9e8dd;
+  border: 1px solid #aeb5aa;
+  box-shadow: none;
+}
+
+.qr b {
+  padding: 7px 4px 0;
+  margin-top: 0;
+  color: #172018;
+  background: transparent;
+}

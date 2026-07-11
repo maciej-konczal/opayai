@@ -43,6 +43,10 @@ class VerifyRequest(SigningRequest):
     assertion: dict[str, Any] = {}
 
 
+class RegistrationVerifyRequest(BaseModel):
+    credential: dict[str, Any] = {}
+
+
 class RailBody(BaseModel):
     rail: Literal["blik_lite", "card_spt_stub", "usdc_stub"]
 
@@ -74,13 +78,13 @@ def revoke_intent(intent_id: str, request: Request):
 
 
 @router.post("/webauthn/register/options")
-def registration_options():
-    return {"auth_mode": "demo_key", "credential_id": "demo-device", "message": "Demo key enabled; platform registration is optional."}
+def registration_options(request: Request):
+    return _service(request).registration_options()
 
 
 @router.post("/webauthn/register/verify")
-def registration_verify():
-    return {"verified": True, "credential_id": "demo-device"}
+def registration_verify(body: RegistrationVerifyRequest, request: Request):
+    return _service(request).verify_registration(body.credential)
 
 
 @router.post("/webauthn/auth/options")

@@ -9,8 +9,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 export const api = {
   draft: (text: string) => request<Intent>('/api/intents/draft', {method: 'POST', body: JSON.stringify({text})}),
-  signOptions: (id: string, type: 'intent' | 'cart' | 'resolution') => request('/api/webauthn/auth/options', {method: 'POST', body: JSON.stringify({context_id: id, context_type: type})}),
-  verify: (id: string, type: 'intent' | 'cart' | 'resolution') => request(`/api/webauthn/auth/verify`, {method: 'POST', body: JSON.stringify({context_id: id, context_type: type, assertion: {}})}),
+  signOptions: (id: string, type: 'intent' | 'cart' | 'resolution') => request<AuthOptions>('/api/webauthn/auth/options', {method: 'POST', body: JSON.stringify({context_id: id, context_type: type})}),
+  verify: (id: string, type: 'intent' | 'cart' | 'resolution', assertion: Record<string, unknown> = {}) => request(`/api/webauthn/auth/verify`, {method: 'POST', body: JSON.stringify({context_id: id, context_type: type, assertion})}),
   products: (intentId?: string) => request<{offers: Offer[]; filtered_out: {offer: Offer; violated_clause: string}[]}>(`/api/products?intent_id=${intentId ?? ''}`),
   purchase: (intent_id: string, sku: string) => request<{purchase_id: string; status: string; proposal: Record<string, unknown>}>('/api/purchases', {method: 'POST', body: JSON.stringify({intent_id, sku, qty: 1})}),
   getPurchase: (id: string) => request<Purchase>(`/api/purchases/${id}`),
@@ -23,4 +23,27 @@ export const api = {
   revoke: (id: string) => request<Intent>(`/api/intents/${id}/revoke`, {method: 'POST'}),
   evidence: (id: string) => request(`/api/purchases/${id}/evidence`),
   events: (callback: (event: LedgerEvent) => void) => { const source = new EventSource(`${BASE}/api/events`); source.addEventListener('ledger', (raw) => callback(JSON.parse((raw as MessageEvent).data))); return () => source.close() },
+}
+
+type ContextType = 'intent' | 'cart' | 'resolution'
+type AuthOptions = { auth_mode: 'demo_key' | 'webauthn'; registration_required?: boolean; options?: Record<string, unknown> }
+
+export async function registerPlatformPasskey() {
+  const registration = await request<{auth_mode: 'demo_key' | 'webauthn'; options?: Record<string, unknown>}>('/api/webauthn/register/options', {method: 'POST'})
+  if (registration.auth_mode === 'demo_key') return {auth_mode: 'demo_key', verified: true}
+  const {startRegistration} = await import('@simplewebauthn/browser')
+  const credential = await startRegistration({optionsJSON: registration.options! as never})
+  return request('/api/webauthn/register/verify', {method: 'POST', body: JSON.stringify({credential})})
+}
+
+export async function approveContext(id: string, type: ContextType) {
+  let auth = await api.signOptions(id, type)
+  if (auth.auth_mode === 'demo_key') return api.verify(id, type)
+  if (auth.registration_required) {
+    await registerPlatformPasskey()
+    auth = await api.signOptions(id, type)
+  }
+  const {startAuthentication} = await import('@simplewebauthn/browser')
+  const assertion = await startAuthentication({optionsJSON: auth.options! as never})
+  return api.verify(id, type, assertion as unknown as Record<string, unknown>)
 }
