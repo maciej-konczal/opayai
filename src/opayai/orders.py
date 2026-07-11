@@ -20,10 +20,12 @@ class OrderStore:
         bus.publish(type, "merchant", {"order_id": order.id, "status": order.status},
                     mandate_ref=ref)
 
-    def create(self, cart: CartMandate, receipt: Receipt, now: datetime | None = None) -> Order:
+    def create(self, cart: CartMandate, receipt: Receipt, returns_window_days: int,
+               now: datetime | None = None) -> Order:
         now = now or datetime.now(timezone.utc)
         self._n += 1
-        o = Order(id=f"ord_{self._n}", cart_mandate_id=cart.id, receipt=receipt, status="PAID")
+        o = Order(id=f"ord_{self._n}", cart_mandate_id=cart.id, receipt=receipt,
+                  status="PAID", returns_window_days=returns_window_days)
         self._orders[o.id] = o
         self._intent_ref[o.id] = cart.intent_mandate_id
         self._record(o, "order.created", now)
@@ -50,13 +52,13 @@ class OrderStore:
         self._record(o, "order.cancelled", now)
         return o
 
-    def request_return(self, order_id: str, reason: str, returns_window_days: int,
+    def request_return(self, order_id: str, reason: str,
                        now: datetime | None = None) -> Order:
         now = now or datetime.now(timezone.utc)
         o = self._orders[order_id]
         if o.status != "DELIVERED":
             raise ValueError("returns require a delivered order")
-        if now > o.receipt.paid_at + timedelta(days=returns_window_days):
+        if now > o.receipt.paid_at + timedelta(days=o.returns_window_days):
             raise ValueError("outside returns window")
         o.status = "RETURN_REQUESTED"
         o.exceptions.append(f"return: {reason}")

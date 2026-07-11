@@ -23,8 +23,8 @@ when it needs input, approval, or a decision. The hardest, riskiest piece of
 **transaction + consent**. That is what opayai is.
 
 - Boski does discovery, voice, coordination. opayai does **authorize -> pay ->
-  track -> resolve**, with signed mandates, spending limits, passkey step-up, and
-  an audit trail. It is the missing half, not a competing whole.
+  track -> resolve**, with signed mandates, spending limits, simulated trusted-
+  surface step-up, and an audit event trail. It is the missing half, not a competing whole.
 - opayai's proactive notifications map 1:1 onto Boski's ping model: `needs_action`
   notifications (approve / passkey / choose an option) route straight to Boski's
   push channel.
@@ -34,7 +34,7 @@ when it needs input, approval, or a decision. The hardest, riskiest piece of
 ## The moat
 
 Anyone can rank products. Almost no one builds the **consent + trust rails**:
-signed mandates, a policy engine, human-present step-up, and an audit trail - the
+signed mandates, a policy engine, authorization proofs, and an audit event trail - the
 boring, hard, regulated part that makes an agent *allowed* to spend your money.
 That is the defensible core, and it is what opayai is.
 
@@ -46,28 +46,28 @@ feeling.
 | Layer | What | In this build |
 |---|---|---|
 | **Proactive shell** (Boski) | voice in, background execution, push notifications | their product - we emit the notifications it would push |
-| **Transaction backbone** (opayai) | mandates, policy, step-up, orders, audit, notifications | fully real - this is the product |
+| **Transaction backbone** (opayai) | mandates, policy, authorization proofs, orders, audit events, notifications | executable deterministic controls; trusted user surface remains simulated |
 | **Rails + catalog** | payment settlement + agent-readable merchant offers | mocked, behind a pluggable interface |
 
 The LLM only touches the fuzzy front door: prompt -> Intent Mandate, choose an
 offer. **Everything after is deterministic tools** - which is why it is reliable
 and auditable.
 
-## Payments are pluggable - AP2 is the headline
+## Payments are pluggable - AP2 is the direction
 
 The consent layer sits **above** the rail, so settlement mechanisms swap without
 touching the mandate/policy logic (`PaymentRail` interface):
 
-- **AP2** (headline) - Google Agent Payments Protocol. opayai's Intent Mandate /
-  Cart Mandate / passkey step-up **are** the AP2 model: human-not-present
-  pre-authorization within the Intent Mandate, human-present strong auth above a
-  threshold. In production the `ap2` rail submits the signed Cart Mandate to an
-  AP2-compliant merchant/PSP; today we simulate that verification.
+- **AP2-inspired adapter** - opayai demonstrates the same product concern:
+  deterministic delegated authorization for human-not-present purchases and
+  trusted-surface step-up above a threshold. It currently uses custom Intent and
+  Cart objects plus a mock adapter; it is not wire-compatible with AP2's official
+  versioned Checkout and Payment Mandates yet.
 - **x402** - HTTP 402 machine-payable endpoints (stablecoin). A different rail,
   same mandate.
 - **Stripe ACP** - card via a PSP token. A different rail, same mandate.
 
-Demo AP2 only, so it stays concrete; mention x402/Stripe as "other rails we drop
+Demo the AP2-inspired adapter only, so it stays concrete; mention x402/Stripe as "other adapters we drop
 in" to prove generality.
 
 ## Scenario runbook
@@ -81,7 +81,7 @@ hits a judging criterion. Prompts are for the Cursor (MCP) demo; toggle the
 > Complete the purchase and give me the link to track it.
 
 Ping: "Payment complete." Proves: the agent goes from prompt to a completed,
-signed purchase within the Intent Mandate (AP2 human-not-present). No babysitting.
+signed purchase within the demo Intent Mandate (AP2-inspired autonomous flow). No babysitting.
 
 ### 2. Decision needed (the user picks the product)
 > I want a monitor for my MacBook, budget around $300, free returns preferred.
@@ -103,7 +103,7 @@ approve. Proves: spending limits + human-in-the-loop.
 > for anything over $250.
 
 Ping: "Confirm with your passkey." A fresh, challenge-bound device signature is
-required before payment. Proves: AP2 human-present strong auth - the clearest
+required before payment. Proves: challenge-bound, expiring step-up evidence - the clearest
 "trust, safety & consent" story.
 
 ### 5. After-purchase (resolve)
@@ -118,12 +118,12 @@ happens after the purchase (tracking, returns), not just the buy.
 Ping: "Purchase blocked - over budget." Policy REJECTs (fail-closed). Proves:
 the trust engine refuses out-of-policy and malformed requests.
 
-## What is built (all real, all tested)
+## What is built (executable and tested; integrations mocked)
 
-- Ed25519-signed **Intent Mandate** + **Cart Mandate** (AP2 model)
+- Ed25519-signed custom **Intent Mandate** + **Cart Mandate** (AP2-inspired model)
 - **Policy engine** (fail-closed): signature, hard requirements, budget, spending
   limits, step-up requirement
-- **Human-present passkey step-up** over a threshold
+- **Simulated trusted-surface/passkey step-up** over a threshold
 - **Approval gate** for over-limit carts
 - **suggest_offers**: ranked shortlist with match reasons for user selection
 - **Pluggable rails**: `ap2` + `card` behind one interface
@@ -132,6 +132,6 @@ the trust engine refuses out-of-policy and malformed requests.
 - **Proactive notifications**: action-needed pings (incl. native desktop ping) +
   web inbox
 - Surfaces: **MCP server** (any host), **CLI demo**, **web status site**
-- 53 passing tests
+- 73 passing tests
 
 See `README.md` for how to run everything.

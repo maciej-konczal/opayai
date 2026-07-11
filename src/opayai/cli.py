@@ -59,10 +59,10 @@ def run_flow(prompt: str, approve: Callable[[dict, dict], bool],
             return {"intent": intent, "cart": cart, "decision": decision, "order": None}
     order = server.execute_payment(cart_id=cart["id"])
     receipt_ref = order["receipt"]["rail_reference"]
-    server.advance_order(order["id"]); server.advance_order(order["id"])  # -> DELIVERED
+    server.advance_order(order["id"])
+    order = server.advance_order(order["id"])  # -> DELIVERED
     if do_return:
-        order = server.create_return(order_id=order["id"], reason="changed my mind",
-                                     returns_window_days=30)
+        order = server.create_return(order_id=order["id"], reason="changed my mind")
     return {"intent": intent, "cart": cart, "decision": decision,
             "order": order, "receipt_reference": receipt_ref}
 

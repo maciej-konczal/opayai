@@ -20,7 +20,7 @@ def _receipt():
 
 def test_create_is_paid_and_advances():
     s = OrderStore()
-    o = s.create(_cart(), _receipt())
+    o = s.create(_cart(), _receipt(), returns_window_days=30)
     assert o.status == "PAID"
     assert s.advance(o.id).status == "SHIPPED"
     assert s.advance(o.id).status == "DELIVERED"
@@ -28,9 +28,9 @@ def test_create_is_paid_and_advances():
 
 def test_cancel_only_before_shipped():
     s = OrderStore()
-    o = s.create(_cart(), _receipt())
+    o = s.create(_cart(), _receipt(), returns_window_days=30)
     assert s.cancel(o.id).status == "CANCELLED"
-    o2 = s.create(_cart(), _receipt())
+    o2 = s.create(_cart(), _receipt(), returns_window_days=30)
     s.advance(o2.id)  # SHIPPED
     try:
         s.cancel(o2.id)
@@ -41,8 +41,18 @@ def test_cancel_only_before_shipped():
 
 def test_return_requires_delivered_and_in_window():
     s = OrderStore()
-    o = s.create(_cart(), _receipt())
+    o = s.create(_cart(), _receipt(), returns_window_days=30)
     s.advance(o.id); s.advance(o.id)  # DELIVERED
-    r = s.request_return(o.id, "changed mind", returns_window_days=30,
-                         now=datetime(2026, 7, 15, 9, 0))
+    r = s.request_return(o.id, "changed mind", now=datetime(2026, 7, 15, 9, 0))
     assert r.status == "RETURN_REQUESTED"
+
+
+def test_return_uses_terms_stored_on_order():
+    s = OrderStore()
+    o = s.create(_cart(), _receipt(), returns_window_days=3)
+    s.advance(o.id); s.advance(o.id)
+    try:
+        s.request_return(o.id, "too late", now=datetime(2026, 7, 15, 9, 0))
+        assert False
+    except ValueError as exc:
+        assert "outside returns window" in str(exc)

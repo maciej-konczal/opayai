@@ -2,12 +2,27 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Money(BaseModel):
     amount: Decimal
     currency: str = "USD"
+
+    @field_validator("amount")
+    @classmethod
+    def non_negative_amount(cls, value: Decimal) -> Decimal:
+        if not value.is_finite() or value < 0:
+            raise ValueError("money amount must be finite and non-negative")
+        return value
+
+    @field_validator("currency")
+    @classmethod
+    def iso_currency(cls, value: str) -> str:
+        value = value.upper()
+        if len(value) != 3 or not value.isalpha():
+            raise ValueError("currency must be a three-letter ISO-style code")
+        return value
 
 
 class Constraint(BaseModel):
@@ -21,7 +36,7 @@ class SpendingLimit(BaseModel):
     per_transaction: Money
     per_period: Money
     period: str = "day"
-    # Carts at or above this need a fresh passkey signature (AP2 human-present).
+    # Carts at or above this need a fresh trusted-surface authorization proof.
     # None disables step-up (everything within limits is human-not-present).
     step_up_threshold: Money | None = None
 
@@ -42,6 +57,13 @@ class CartItem(BaseModel):
     title: str
     qty: int
     unit_price: Money
+
+    @field_validator("qty")
+    @classmethod
+    def positive_quantity(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("quantity must be positive")
+        return value
 
 
 class CartMandate(BaseModel):
@@ -112,3 +134,4 @@ class Order(BaseModel):
     ]
     timeline: list[Event] = Field(default_factory=list)
     exceptions: list[str] = Field(default_factory=list)
+    returns_window_days: int

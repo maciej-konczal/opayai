@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 from decimal import Decimal
 from mcp.server.fastmcp import FastMCP
 from opayai.types import Constraint, Money, SpendingLimit
@@ -11,7 +12,7 @@ from opayai.mandate import create_intent_mandate as _create_intent, propose_cart
 from opayai.policy import evaluate_policy as _evaluate
 from opayai.orders import store as order_store
 from opayai.events import bus
-from opayai import stepup, recommend, notify, channels
+from opayai import stepup, recommend, notify, channels, authorization
 
 _INSTRUCTIONS = """opayai is an agent-commerce backbone. Default flow:
 1. Call create_intent_mandate FIRST (constraints, spending limits, optional step_up_threshold).
@@ -28,12 +29,13 @@ _INSTRUCTIONS = """opayai is an agent-commerce backbone. Default flow:
 app = FastMCP("opayai-mcp", instructions=_INSTRUCTIONS)
 
 SESSION: dict = {}
+_PAYMENT_LOCK = threading.Lock()
 
 
 def reset_session() -> None:
     SESSION.clear()
     SESSION.update({"intents": {}, "carts": {}, "offers": {}, "decisions": {},
-                    "approved": set(), "stepped_up": set(), "paid": {},
+                    "approvals": {}, "stepups": {}, "paid": {},
                     "period_spent": Decimal("0")})
     mandate_mod.reset_ids()
     rails_mod.reset_rail_ids()
@@ -149,11 +151,20 @@ def request_approval(cart_id: str, approved: bool) -> dict:
     the user. execute_payment will refuse an escalated cart until approved=true
     has been recorded here.
     """
-    if approved:
-        SESSION["approved"].add(cart_id)
-    bus.publish("approval.recorded", "user", {"cart_id": cart_id, "approved": approved},
+    decision = SESSION["decisions"].get(cart_id)
+    if decision is None or decision.result != "ESCALATE":
+        raise ValueError("approval is only valid for an escalated policy decision")
+    cart = SESSION["carts"][cart_id]
+    proof = authorization.issue("approval", cart) if approved else None
+    if proof:
+        SESSION["approvals"][cart_id] = proof
+    else:
+        SESSION["approvals"].pop(cart_id, None)
+    bus.publish("approval.recorded", "user",
+                {"cart_id": cart_id, "approved": approved,
+                 "proof_id": proof["id"] if proof else None},
                 mandate_ref=SESSION["carts"][cart_id].intent_mandate_id)
-    return {"cart_id": cart_id, "approved": approved}
+    return {"cart_id": cart_id, "approved": approved, "proof": proof}
 
 
 @app.tool()
@@ -165,10 +176,15 @@ def authorize_step_up(cart_id: str) -> dict:
     fresh challenge bound to this cart and amount, and verifies it. Returns
     {authorized, device_pubkey}. execute_payment stays refused until this succeeds.
     """
+    decision = SESSION["decisions"].get(cart_id)
+    if decision is None or not decision.step_up_required or decision.result == "REJECT":
+        raise ValueError("step-up is only valid for an eligible policy decision")
     cart = SESSION["carts"][cart_id]
     res = stepup.authorize(cart_id, str(cart.total.amount), cart.intent_mandate_id)
     if res["authorized"]:
-        SESSION["stepped_up"].add(cart_id)
+        proof = authorization.issue("step_up", cart)
+        SESSION["stepups"][cart_id] = proof
+        res["proof"] = proof
     return res
 
 
@@ -184,25 +200,34 @@ def execute_payment(cart_id: str) -> dict:
     and a `status_url` the user can click to view live order status - surface that
     link to the user.
     """
-    cart = SESSION["carts"][cart_id]
-    if cart_id in SESSION["paid"]:
-        raise ValueError("cart already paid")
-    dec = SESSION["decisions"].get(cart_id)
-    if dec is None:
-        raise ValueError("evaluate_policy must run before payment")
-    if dec.result == "REJECT":
-        raise ValueError("policy rejected this cart")
-    if dec.result == "ESCALATE" and cart_id not in SESSION["approved"]:
-        raise ValueError("cart requires user approval before payment")
-    if dec.step_up_required and cart_id not in SESSION["stepped_up"]:
-        raise ValueError("cart requires passkey step-up authorization before payment")
-    receipt = rails_mod.get_rail(cart.selected_rail).charge(cart)
-    order = order_store.create(cart, receipt)
-    SESSION["paid"][cart_id] = order.id
-    SESSION["period_spent"] += cart.total.amount
-    d = order.model_dump(mode="json")
-    d["status_url"] = f"{_web_base()}/order/{order.id}"
-    return d
+    with _PAYMENT_LOCK:
+        cart = SESSION["carts"][cart_id]
+        if cart_id in SESSION["paid"]:
+            raise ValueError("cart already paid")
+        recorded = SESSION["decisions"].get(cart_id)
+        if recorded is None:
+            raise ValueError("evaluate_policy must run before payment")
+        intent = SESSION["intents"][cart.intent_mandate_id]
+        dec = _evaluate(intent, cart, SESSION["offers"],
+                        period_spent=SESSION["period_spent"], publish=False)
+        SESSION["decisions"][cart_id] = dec
+        if dec.result == "REJECT":
+            raise ValueError("policy rejected this cart")
+        if dec.result == "ESCALATE" and not authorization.verify(
+                SESSION["approvals"].get(cart_id), "approval", cart):
+            raise ValueError("cart requires valid user approval before payment")
+        if dec.step_up_required and not authorization.verify(
+                SESSION["stepups"].get(cart_id), "step_up", cart):
+            raise ValueError("cart requires valid step-up authorization before payment")
+        receipt = rails_mod.get_rail(cart.selected_rail).charge(cart)
+        offers = [SESSION["offers"][item.offer_id] for item in cart.items]
+        returns_window = min(o.returns_window_days for o in offers)
+        order = order_store.create(cart, receipt, returns_window_days=returns_window)
+        SESSION["paid"][cart_id] = order.id
+        SESSION["period_spent"] += cart.total.amount
+        d = order.model_dump(mode="json")
+        d["status_url"] = f"{_web_base()}/order/{order.id}"
+        return d
 
 
 @app.tool()
@@ -233,23 +258,24 @@ def cancel_order(order_id: str) -> dict:
 
 
 @app.tool()
-def create_return(order_id: str, reason: str, returns_window_days: int = 30) -> dict:
+def create_return(order_id: str, reason: str) -> dict:
     """Request a return for a DELIVERED order within its returns window.
 
     This is the post-purchase "resolve" step. Fails if the order is not delivered
     or the return window has passed.
     """
-    return order_store.request_return(order_id, reason, returns_window_days).model_dump(mode="json")
+    return order_store.request_return(order_id, reason).model_dump(mode="json")
 
 
 @app.tool()
 def get_audit_trail(mandate_ref: str | None = None) -> list[dict]:
-    """Return the full signed audit trail for a mandate (pass the intent id).
+    """Return the full audit event trail for a mandate (pass the intent id).
 
     Every event - intent, cart, policy decision, approval, payment, and the whole
     order lifecycle through returns - is included in order. This is the receipt of
-    exactly what the user agreed to and what happened. Omit mandate_ref for all
-    events.
+    what the system recorded about user authorization and execution. The Intent
+    and Cart Mandates and authorization proofs are signed; the event stream itself
+    is not a cryptographic ledger. Omit mandate_ref for all events.
     """
     return [e.model_dump(mode="json") for e in bus.trail(mandate_ref)]
 
