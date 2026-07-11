@@ -12,8 +12,24 @@ from __future__ import annotations
 import html
 import json
 import os
+import secrets
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from opayai import notify, data, authstore, authorization
+
+# Per-process CSRF token: rendered into the authorize form and required on POST, so
+# a cross-site page (which cannot read this token) cannot forge an authorization.
+_CSRF = secrets.token_urlsafe(32)
+
+
+def _same_origin(origin: str, host: str) -> bool:
+    if not origin:
+        return True  # non-browser client with no Origin; the CSRF token still gates it
+    try:
+        netloc = origin.split("//", 1)[1].split("/", 1)[0]
+    except IndexError:
+        return False
+    return netloc == host or netloc.startswith(("localhost", "127.0.0.1"))
 
 
 def log_path() -> str:
@@ -269,6 +285,7 @@ def render_authorize() -> str:
             f'<div class=card><b>{what}</b> - ${html.escape(str(req.get("amount")))}'
             f'<div class=muted>cart {cid}</div>'
             f'<form method="post" action="/authorize/{cid}/{html.escape(kind)}">'
+            f'<input type="hidden" name="csrf" value="{_CSRF}">'
             f'<button type="submit">{label}</button></form></div>')
     body = ("<h1>Authorize</h1>"
             "<p class=muted>This is your trusted surface. Authorizing here is the step "
@@ -300,16 +317,18 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", 0))
-        if length:
-            self.rfile.read(length)
+        body = self.rfile.read(length) if length else b""
+        fields = urllib.parse.parse_qs(body.decode("utf-8", "replace"))
+        csrf_ok = fields.get("csrf", [""])[0] == _CSRF
+        origin_ok = _same_origin(self.headers.get("Origin", ""), self.headers.get("Host", ""))
         parts = self.path.split("?", 1)[0].rstrip("/").split("/")
-        if len(parts) == 4 and parts[1] == "authorize":
+        if len(parts) == 4 and parts[1] == "authorize" and csrf_ok and origin_ok:
             authorize(parts[2], parts[3])
             self.send_response(303)
             self.send_header("Location", "/authorize")
             self.end_headers()
             return
-        self.send_response(404)
+        self.send_response(403)
         self.end_headers()
 
     def log_message(self, *args) -> None:
