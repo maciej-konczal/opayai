@@ -27,6 +27,11 @@ def notification_for(event: dict) -> dict | None:
         return _n("Options ready to choose",
                   f"{p.get('count', 'A few')} options match - pick one to continue.",
                   True, event)
+    if t == "authorization.pending":
+        what = "passkey step-up" if p.get("kind") == "step_up" else "approval"
+        return _n(f"Authorize with your {what}",
+                  f"A purchase needs your {what}. Authorize at {p.get('authorize_url', '')}.",
+                  True, event)
     if t == "policy.evaluated":
         if p.get("result") == "ESCALATE":
             return _n("Approval needed",

@@ -31,6 +31,9 @@ class OrderStore:
         self._record(o, "order.created", now)
         return o
 
+    def all_orders(self) -> list[Order]:
+        return list(self._orders.values())
+
     def get(self, order_id: str) -> Order:
         return self._orders[order_id]
 

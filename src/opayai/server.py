@@ -12,19 +12,23 @@ from opayai.mandate import create_intent_mandate as _create_intent, propose_cart
 from opayai.policy import evaluate_policy as _evaluate
 from opayai.orders import store as order_store
 from opayai.events import bus
-from opayai import stepup, recommend, notify, channels, authorization
+from opayai import recommend, notify, channels, authorization, fulfillment, authstore
 
 _INSTRUCTIONS = """opayai is an agent-commerce backbone. Default flow:
-1. Call create_intent_mandate FIRST (constraints, spending limits, optional step_up_threshold).
+1. Call create_intent_mandate FIRST (constraints, spending limits). You do NOT need to
+   ask the user for a passkey/step-up threshold - it defaults from their profile.
 2. When the user is shopping, call suggest_offers and PRESENT the ranked options
    (with their match_reason) to the user, then WAIT for them to choose. Do NOT call
    propose_cart or execute_payment until the user picks - UNLESS the user explicitly
    says to buy autonomously (e.g. "just buy it", "complete the purchase", "pick the best").
-3. Always run evaluate_policy before execute_payment. If it returns step_up_required,
-   call authorize_step_up (passkey). If the result is ESCALATE, ask the user, then
-   request_approval. Never call execute_payment while a gate is unmet.
+3. Always run evaluate_policy, then call execute_payment. If execute_payment returns a
+   PENDING status, the cart needs the user's approval or passkey step-up: you CANNOT
+   authorize on their behalf. Tell the user to authorize at the returned authorize_url
+   (the web trusted surface), then call execute_payment again to finish.
 4. Tell the user about any action-needed step (choose / approve / passkey) and surface
-   the status_url returned by execute_payment/get_order so they can track the order."""
+   the status_url returned by execute_payment/get_order so they can track the order.
+5. Do NOT call advance_order - fulfillment (shipped, then delivered) happens on its own
+   in the background, and the user is notified proactively. Just hand over the status_url."""
 
 app = FastMCP("opayai-mcp", instructions=_INSTRUCTIONS)
 
@@ -35,8 +39,7 @@ _PAYMENT_LOCK = threading.Lock()
 def reset_session() -> None:
     SESSION.clear()
     SESSION.update({"intents": {}, "carts": {}, "offers": {}, "decisions": {},
-                    "approvals": {}, "stepups": {}, "paid": {},
-                    "period_spent": Decimal("0")})
+                    "paid": {}, "period_spent": Decimal("0")})
     mandate_mod.reset_ids()
     rails_mod.reset_rail_ids()
 
@@ -74,9 +77,13 @@ def create_intent_mandate(user_id: str, category: str, max_total: str,
     tokens "free_returns", "compat:<tag>" (e.g. "compat:macbook"), and
     "arrives_by:YYYY-MM-DD". `max_total`, `per_transaction`, `per_period` are
     decimal strings. `step_up_threshold` (optional decimal string): carts at or
-    above it need a fresh passkey authorization (call authorize_step_up before
-    execute_payment). Returns the signed mandate; use its `id` in later calls.
+    above it need the user's fresh passkey authorization on the web trusted surface
+    before execute_payment will pay. If omitted, it defaults to the user's configured
+    threshold from their profile - the user does NOT need to state it each time.
+    Returns the signed mandate; use its `id` later.
     """
+    if step_up_threshold is None:
+        step_up_threshold = data.load_persona().get("defaults", {}).get("step_up_over", {}).get("amount")
     threshold = Money(amount=Decimal(step_up_threshold)) if step_up_threshold else None
     im = _create_intent(
         user_id,
@@ -132,9 +139,9 @@ def propose_cart(intent_id: str, offer_ids: list[str], rail: str, rationale: str
 def evaluate_policy(cart_id: str) -> dict:
     """Check a proposed cart against its intent mandate and spending limits.
 
-    Returns a decision: "AUTO_APPROVE" (safe to pay), "ESCALATE" (needs user
-    approval via request_approval), or "REJECT" (a hard rule failed), plus a
-    per-rule breakdown. You MUST call this before execute_payment.
+    Returns a decision: "AUTO_APPROVE" (safe to pay), "ESCALATE" (needs the user's
+    approval on the trusted surface), or "REJECT" (a hard rule failed), plus a
+    per-rule breakdown and step_up_required. You MUST call this before execute_payment.
     """
     cart = SESSION["carts"][cart_id]
     intent = SESSION["intents"][cart.intent_mandate_id]
@@ -143,62 +150,41 @@ def evaluate_policy(cart_id: str) -> dict:
     return dec.model_dump(mode="json")
 
 
-@app.tool()
-def request_approval(cart_id: str, approved: bool) -> dict:
-    """Record the user's approval decision for an escalated cart.
+def _ensure_authorization(cart, kind: str) -> dict | None:
+    """Return None if a valid proof exists, else create a pending request + ping.
 
-    Call this only when evaluate_policy returned "ESCALATE", after you have asked
-    the user. execute_payment will refuse an escalated cart until approved=true
-    has been recorded here.
+    The proof can only be issued by the human on the web trusted surface, never by
+    the agent. On the first unmet check we write a pending request and publish an
+    authorization.pending event (which pings the user with the authorize link).
     """
-    decision = SESSION["decisions"].get(cart_id)
-    if decision is None or decision.result != "ESCALATE":
-        raise ValueError("approval is only valid for an escalated policy decision")
-    cart = SESSION["carts"][cart_id]
-    proof = authorization.issue("approval", cart) if approved else None
-    if proof:
-        SESSION["approvals"][cart_id] = proof
-    else:
-        SESSION["approvals"].pop(cart_id, None)
-    bus.publish("approval.recorded", "user",
-                {"cart_id": cart_id, "approved": approved,
-                 "proof_id": proof["id"] if proof else None},
-                mandate_ref=SESSION["carts"][cart_id].intent_mandate_id)
-    return {"cart_id": cart_id, "approved": approved, "proof": proof}
-
-
-@app.tool()
-def authorize_step_up(cart_id: str) -> dict:
-    """Run the human-present passkey ceremony for a cart that requires step-up.
-
-    Call this when evaluate_policy returned step_up_required=true, before
-    execute_payment. Simulates the user's registered device (passkey) signing a
-    fresh challenge bound to this cart and amount, and verifies it. Returns
-    {authorized, device_pubkey}. execute_payment stays refused until this succeeds.
-    """
-    decision = SESSION["decisions"].get(cart_id)
-    if decision is None or not decision.step_up_required or decision.result == "REJECT":
-        raise ValueError("step-up is only valid for an eligible policy decision")
-    cart = SESSION["carts"][cart_id]
-    res = stepup.authorize(cart_id, str(cart.total.amount), cart.intent_mandate_id)
-    if res["authorized"]:
-        proof = authorization.issue("step_up", cart)
-        SESSION["stepups"][cart_id] = proof
-        res["proof"] = proof
-    return res
+    if authorization.verify(authstore.read_proof(cart.id, kind), kind, cart):
+        return None
+    if authstore.read_pending(cart.id, kind) is None:
+        authstore.write_pending(cart.id, kind, str(cart.total.amount),
+                                cart.total.currency, cart.intent_mandate_id)
+        bus.publish("authorization.pending", "agent",
+                    {"cart_id": cart.id, "kind": kind, "amount": str(cart.total.amount),
+                     "authorize_url": f"{_web_base()}/authorize"},
+                    mandate_ref=cart.intent_mandate_id)
+    label = "passkey step-up" if kind == "step_up" else "approval"
+    return {"status": "PENDING_STEP_UP" if kind == "step_up" else "PENDING_APPROVAL",
+            "cart_id": cart.id, "kind": kind,
+            "authorize_url": f"{_web_base()}/authorize",
+            "message": f"This purchase needs the user's {label} on the trusted surface "
+                       f"({_web_base()}/authorize). Ask the user to authorize there, "
+                       f"then call execute_payment again."}
 
 
 @app.tool()
 def execute_payment(cart_id: str) -> dict:
-    """Charge the selected rail for an approved cart and create the order.
+    """Charge the rail and create the order - if all gates are satisfied.
 
-    Only succeeds when the policy decision is AUTO_APPROVE, or an ESCALATE that
-    has a recorded approval. If the decision is step_up_required, a successful
-    authorize_step_up (passkey) is also required. Refuses REJECTs, unapproved
-    escalations, missing step-up, and a repeat payment of the same cart
-    (idempotency guard). Returns the created order (status PAID) with its receipt
-    and a `status_url` the user can click to view live order status - surface that
-    link to the user.
+    Re-evaluates policy at payment time. If the cart needs the user's approval
+    (ESCALATE) or passkey step-up, and the user has NOT yet authorized on the web
+    trusted surface, this returns a PENDING status with an `authorize_url` instead
+    of paying - the agent cannot self-authorize. Tell the user to authorize at that
+    link, then call execute_payment again. On success returns the order (PAID) with
+    a `status_url`. Refuses REJECTs and repeat payment of the same cart.
     """
     with _PAYMENT_LOCK:
         cart = SESSION["carts"][cart_id]
@@ -213,12 +199,25 @@ def execute_payment(cart_id: str) -> dict:
         SESSION["decisions"][cart_id] = dec
         if dec.result == "REJECT":
             raise ValueError("policy rejected this cart")
-        if dec.result == "ESCALATE" and not authorization.verify(
-                SESSION["approvals"].get(cart_id), "approval", cart):
-            raise ValueError("cart requires valid user approval before payment")
-        if dec.step_up_required and not authorization.verify(
-                SESSION["stepups"].get(cart_id), "step_up", cart):
-            raise ValueError("cart requires valid step-up authorization before payment")
+        if dec.result == "ESCALATE":
+            pending = _ensure_authorization(cart, "approval")
+            if pending is not None:
+                return pending
+        if dec.step_up_required:
+            pending = _ensure_authorization(cart, "step_up")
+            if pending is not None:
+                return pending
+        # gates satisfied by human-issued proofs - record them on the trail, then pay
+        if dec.result == "ESCALATE":
+            bus.publish("approval.recorded", "user",
+                        {"cart_id": cart_id, "approved": True,
+                         "proof_id": authstore.read_proof(cart_id, "approval")["id"]},
+                        mandate_ref=cart.intent_mandate_id)
+        if dec.step_up_required:
+            bus.publish("stepup.authorized", "user",
+                        {"cart_id": cart_id,
+                         "proof_id": authstore.read_proof(cart_id, "step_up")["id"]},
+                        mandate_ref=cart.intent_mandate_id)
         receipt = rails_mod.get_rail(cart.selected_rail).charge(cart)
         offers = [SESSION["offers"][item.offer_id] for item in cart.items]
         returns_window = min(o.returns_window_days for o in offers)
@@ -324,6 +323,7 @@ def _install_event_logging() -> None:
 def run() -> None:
     _install_event_logging()
     channels.install(bus)   # webhook = full event feed; desktop/email = action pings
+    fulfillment.start()     # orders ship/deliver on a timer -> proactive notifications
     app.run()
 
 

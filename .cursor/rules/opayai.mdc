@@ -8,8 +8,9 @@ alwaysApply: true
 When the user is shopping via the `opayai` MCP tools, follow this by default -
 the user should not have to repeat these instructions each time:
 
-1. Call `create_intent_mandate` FIRST (map the request to constraints, spending
-   limits, and a `step_up_threshold` if the user mentions one).
+1. Call `create_intent_mandate` FIRST (map the request to constraints and spending
+   limits). Do NOT ask the user for a passkey/step-up threshold - it defaults from
+   their profile; only pass `step_up_threshold` if the user explicitly overrides it.
 2. **Present options and wait.** Call `suggest_offers` and show the user the ranked
    shortlist with each option's `match_reason` (why it fits, or why not - over
    budget / out of stock / etc.). Then STOP and let the user pick. Do NOT call
@@ -23,3 +24,6 @@ the user should not have to repeat these instructions each time:
 4. Tell the user about any action-needed moment (choose / approve / passkey), and
    always surface the `status_url` returned by `execute_payment`/`get_order` so
    they can track the order.
+5. Do NOT call `advance_order` - fulfillment (shipped, then delivered) happens
+   automatically in the background and the user is notified proactively. After
+   payment, just hand over the `status_url`.
