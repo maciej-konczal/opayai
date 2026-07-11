@@ -33,6 +33,16 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"ok")
 
+    def do_GET(self) -> None:
+        msg = (b"opayai webhook sink - this endpoint only RECEIVES posted events; "
+               b"watch this terminal for them.\nThe status site (profile / authorize / "
+               b"orders) is at http://localhost:8000\n")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(msg)))
+        self.end_headers()
+        self.wfile.write(msg)
+
     def log_message(self, *args) -> None:
         pass
 
