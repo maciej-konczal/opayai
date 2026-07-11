@@ -1259,7 +1259,7 @@ def test_end_to_end_happy_path():
 def test_escalation_blocks_until_approval():
     intent = server.create_intent_mandate(
         user_id="u_1", category="monitor", max_total="400",
-        hard_requirements=[], per_transaction="400", per_period="300")
+        hard_requirements=[], per_transaction="400", per_period="200")
     offers = server.search_offers(category="monitor", max_price="400")
     picked = [offers[0]["id"]]
     cart = server.propose_cart(intent_id=intent["id"], offer_ids=picked,
