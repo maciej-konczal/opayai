@@ -11,6 +11,7 @@ from opayai.mandate import create_intent_mandate as _create_intent, propose_cart
 from opayai.policy import evaluate_policy as _evaluate
 from opayai.orders import store as order_store
 from opayai.events import bus
+from opayai import stepup
 
 app = FastMCP("opayai-mcp")
 
@@ -20,7 +21,8 @@ SESSION: dict = {}
 def reset_session() -> None:
     SESSION.clear()
     SESSION.update({"intents": {}, "carts": {}, "offers": {}, "decisions": {},
-                    "approved": set(), "paid": {}, "period_spent": Decimal("0")})
+                    "approved": set(), "stepped_up": set(), "paid": {},
+                    "period_spent": Decimal("0")})
     mandate_mod.reset_ids()
     rails_mod.reset_rail_ids()
 
@@ -46,21 +48,25 @@ def search_offers(category: str | None = None, max_price: str | None = None) -> 
 @app.tool()
 def create_intent_mandate(user_id: str, category: str, max_total: str,
                           hard_requirements: list[str], per_transaction: str,
-                          per_period: str) -> dict:
+                          per_period: str, step_up_threshold: str | None = None) -> dict:
     """Create and sign the user's Intent Mandate: what the agent is authorized to buy.
 
     Call this FIRST, before any other tool. It encodes the user's constraints and
     spending limits and is cryptographically signed. `hard_requirements` use the
     tokens "free_returns", "compat:<tag>" (e.g. "compat:macbook"), and
     "arrives_by:YYYY-MM-DD". `max_total`, `per_transaction`, `per_period` are
-    decimal strings. Returns the signed mandate; use its `id` in later calls.
+    decimal strings. `step_up_threshold` (optional decimal string): carts at or
+    above it need a fresh passkey authorization (call authorize_step_up before
+    execute_payment). Returns the signed mandate; use its `id` in later calls.
     """
+    threshold = Money(amount=Decimal(step_up_threshold)) if step_up_threshold else None
     im = _create_intent(
         user_id,
         Constraint(max_total=Money(amount=Decimal(max_total)), category=category,
                    hard_requirements=hard_requirements),
         SpendingLimit(per_transaction=Money(amount=Decimal(per_transaction)),
-                      per_period=Money(amount=Decimal(per_period))))
+                      per_period=Money(amount=Decimal(per_period)),
+                      step_up_threshold=threshold))
     SESSION["intents"][im.id] = im
     return im.model_dump(mode="json")
 
@@ -112,14 +118,32 @@ def request_approval(cart_id: str, approved: bool) -> dict:
 
 
 @app.tool()
+def authorize_step_up(cart_id: str) -> dict:
+    """Run the human-present passkey ceremony for a cart that requires step-up.
+
+    Call this when evaluate_policy returned step_up_required=true, before
+    execute_payment. Simulates the user's registered device (passkey) signing a
+    fresh challenge bound to this cart and amount, and verifies it. Returns
+    {authorized, device_pubkey}. execute_payment stays refused until this succeeds.
+    """
+    cart = SESSION["carts"][cart_id]
+    res = stepup.authorize(cart_id, str(cart.total.amount), cart.intent_mandate_id)
+    if res["authorized"]:
+        SESSION["stepped_up"].add(cart_id)
+    return res
+
+
+@app.tool()
 def execute_payment(cart_id: str) -> dict:
     """Charge the selected rail for an approved cart and create the order.
 
     Only succeeds when the policy decision is AUTO_APPROVE, or an ESCALATE that
-    has a recorded approval. Refuses REJECTs, unapproved escalations, and a repeat
-    payment of the same cart (idempotency guard). Returns the created order
-    (status PAID) with its receipt and a `status_url` the user can click to view
-    live order status - surface that link to the user.
+    has a recorded approval. If the decision is step_up_required, a successful
+    authorize_step_up (passkey) is also required. Refuses REJECTs, unapproved
+    escalations, missing step-up, and a repeat payment of the same cart
+    (idempotency guard). Returns the created order (status PAID) with its receipt
+    and a `status_url` the user can click to view live order status - surface that
+    link to the user.
     """
     cart = SESSION["carts"][cart_id]
     if cart_id in SESSION["paid"]:
@@ -131,6 +155,8 @@ def execute_payment(cart_id: str) -> dict:
         raise ValueError("policy rejected this cart")
     if dec.result == "ESCALATE" and cart_id not in SESSION["approved"]:
         raise ValueError("cart requires user approval before payment")
+    if dec.step_up_required and cart_id not in SESSION["stepped_up"]:
+        raise ValueError("cart requires passkey step-up authorization before payment")
     receipt = rails_mod.get_rail(cart.selected_rail).charge(cart)
     order = order_store.create(cart, receipt)
     SESSION["paid"][cart_id] = order.id

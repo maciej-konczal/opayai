@@ -21,6 +21,9 @@ class SpendingLimit(BaseModel):
     per_transaction: Money
     per_period: Money
     period: str = "day"
+    # Carts at or above this need a fresh passkey signature (AP2 human-present).
+    # None disables step-up (everything within limits is human-not-present).
+    step_up_threshold: Money | None = None
 
 
 class IntentMandate(BaseModel):
@@ -62,6 +65,7 @@ class PolicyDecision(BaseModel):
     cart_mandate_id: str
     result: Literal["AUTO_APPROVE", "ESCALATE", "REJECT"]
     checks: list[PolicyCheck]
+    step_up_required: bool = False
 
 
 class Event(BaseModel):

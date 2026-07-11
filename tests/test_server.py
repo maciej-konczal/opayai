@@ -77,3 +77,29 @@ def test_audit_trail_includes_order_lifecycle():
     server.advance_order(order_id=order["id"])
     types = [e["type"] for e in server.get_audit_trail(mandate_ref=intent["id"])]
     assert "order.created" in types and "order.advanced" in types
+
+
+def test_step_up_blocks_payment_until_passkey():
+    intent = server.create_intent_mandate(
+        user_id="u_1", category="monitor", max_total="300",
+        hard_requirements=["free_returns", "compat:macbook"],
+        per_transaction="400", per_period="1000", step_up_threshold="250")
+    offers = server.search_offers(category="monitor", max_price="300")
+    picked = [o["id"] for o in offers if o["free_returns"]
+              and "macbook" in o["specs"].get("compat", [])][:1]
+    cart = server.propose_cart(intent_id=intent["id"], offer_ids=picked,
+                               rail="x402", rationale="fit")
+    dec = server.evaluate_policy(cart_id=cart["id"])
+    assert dec["step_up_required"] is True
+    # payment refused before the passkey ceremony
+    try:
+        server.execute_payment(cart_id=cart["id"])
+        assert False
+    except ValueError:
+        assert True
+    auth = server.authorize_step_up(cart_id=cart["id"])
+    assert auth["authorized"] is True
+    order = server.execute_payment(cart_id=cart["id"])
+    assert order["status"] == "PAID"
+    types = [e["type"] for e in server.get_audit_trail(mandate_ref=intent["id"])]
+    assert "stepup.authorized" in types
