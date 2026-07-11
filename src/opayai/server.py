@@ -1,4 +1,7 @@
 from __future__ import annotations
+import json
+import os
+import sys
 from decimal import Decimal
 from mcp.server.fastmcp import FastMCP
 from opayai.types import Constraint, Money, SpendingLimit
@@ -27,6 +30,12 @@ reset_session()
 
 @app.tool()
 def search_offers(category: str | None = None, max_price: str | None = None) -> list[dict]:
+    """Search the catalog for agent-readable offers.
+
+    Returns structured offers (price, stock, delivery date, return policy, specs,
+    rating) the agent can reason over. Call this after create_intent_mandate to
+    find candidate products. `max_price` is a decimal string (e.g. "300").
+    """
     mp = Decimal(max_price) if max_price is not None else None
     offers = data.search_offers(category=category, max_price=mp)
     for o in offers:
@@ -38,6 +47,14 @@ def search_offers(category: str | None = None, max_price: str | None = None) -> 
 def create_intent_mandate(user_id: str, category: str, max_total: str,
                           hard_requirements: list[str], per_transaction: str,
                           per_period: str) -> dict:
+    """Create and sign the user's Intent Mandate: what the agent is authorized to buy.
+
+    Call this FIRST, before any other tool. It encodes the user's constraints and
+    spending limits and is cryptographically signed. `hard_requirements` use the
+    tokens "free_returns", "compat:<tag>" (e.g. "compat:macbook"), and
+    "arrives_by:YYYY-MM-DD". `max_total`, `per_transaction`, `per_period` are
+    decimal strings. Returns the signed mandate; use its `id` in later calls.
+    """
     im = _create_intent(
         user_id,
         Constraint(max_total=Money(amount=Decimal(max_total)), category=category,
@@ -50,6 +67,13 @@ def create_intent_mandate(user_id: str, category: str, max_total: str,
 
 @app.tool()
 def propose_cart(intent_id: str, offer_ids: list[str], rail: str, rationale: str) -> dict:
+    """Build and sign a Cart Mandate: the specific offers the agent wants to buy.
+
+    Call after search_offers, once you have chosen offer_ids that satisfy the
+    intent's hard requirements and budget. `rail` is the payment rail: "x402" or
+    "card". `rationale` is a short human-readable reason shown to the user. The
+    cart MUST be checked with evaluate_policy before execute_payment.
+    """
     intent = SESSION["intents"][intent_id]
     offers = [SESSION["offers"][oid] for oid in offer_ids]
     cart = _propose(intent, offers, rail=rail, rationale=rationale)
@@ -59,6 +83,12 @@ def propose_cart(intent_id: str, offer_ids: list[str], rail: str, rationale: str
 
 @app.tool()
 def evaluate_policy(cart_id: str) -> dict:
+    """Check a proposed cart against its intent mandate and spending limits.
+
+    Returns a decision: "AUTO_APPROVE" (safe to pay), "ESCALATE" (needs user
+    approval via request_approval), or "REJECT" (a hard rule failed), plus a
+    per-rule breakdown. You MUST call this before execute_payment.
+    """
     cart = SESSION["carts"][cart_id]
     intent = SESSION["intents"][cart.intent_mandate_id]
     dec = _evaluate(intent, cart, SESSION["offers"], period_spent=SESSION["period_spent"])
@@ -68,6 +98,12 @@ def evaluate_policy(cart_id: str) -> dict:
 
 @app.tool()
 def request_approval(cart_id: str, approved: bool) -> dict:
+    """Record the user's approval decision for an escalated cart.
+
+    Call this only when evaluate_policy returned "ESCALATE", after you have asked
+    the user. execute_payment will refuse an escalated cart until approved=true
+    has been recorded here.
+    """
     if approved:
         SESSION["approved"].add(cart_id)
     bus.publish("approval.recorded", "user", {"cart_id": cart_id, "approved": approved},
@@ -77,6 +113,13 @@ def request_approval(cart_id: str, approved: bool) -> dict:
 
 @app.tool()
 def execute_payment(cart_id: str) -> dict:
+    """Charge the selected rail for an approved cart and create the order.
+
+    Only succeeds when the policy decision is AUTO_APPROVE, or an ESCALATE that
+    has a recorded approval. Refuses REJECTs, unapproved escalations, and a repeat
+    payment of the same cart (idempotency guard). Returns the created order
+    (status PAID) with its receipt.
+    """
     cart = SESSION["carts"][cart_id]
     if cart_id in SESSION["paid"]:
         raise ValueError("cart already paid")
@@ -96,30 +139,74 @@ def execute_payment(cart_id: str) -> dict:
 
 @app.tool()
 def advance_order(order_id: str) -> dict:
+    """Advance an order's fulfillment state: PAID -> SHIPPED -> DELIVERED.
+
+    Simulates and records fulfillment progress. Call twice to reach DELIVERED
+    (required before create_return).
+    """
     return order_store.advance(order_id).model_dump(mode="json")
 
 
 @app.tool()
 def get_order(order_id: str) -> dict:
+    """Fetch the current status and event timeline of an order by id."""
     return order_store.get(order_id).model_dump(mode="json")
 
 
 @app.tool()
 def cancel_order(order_id: str) -> dict:
+    """Cancel an order before it ships (allowed from CREATED or PAID only)."""
     return order_store.cancel(order_id).model_dump(mode="json")
 
 
 @app.tool()
 def create_return(order_id: str, reason: str, returns_window_days: int = 30) -> dict:
+    """Request a return for a DELIVERED order within its returns window.
+
+    This is the post-purchase "resolve" step. Fails if the order is not delivered
+    or the return window has passed.
+    """
     return order_store.request_return(order_id, reason, returns_window_days).model_dump(mode="json")
 
 
 @app.tool()
 def get_audit_trail(mandate_ref: str | None = None) -> list[dict]:
+    """Return the full signed audit trail for a mandate (pass the intent id).
+
+    Every event - intent, cart, policy decision, approval, payment, and the whole
+    order lifecycle through returns - is included in order. This is the receipt of
+    exactly what the user agreed to and what happened. Omit mandate_ref for all
+    events.
+    """
     return [e.model_dump(mode="json") for e in bus.trail(mandate_ref)]
 
 
+def _event_log_path() -> str:
+    return os.environ.get("OPAYAI_EVENT_LOG", os.path.expanduser("~/.opayai/events.jsonl"))
+
+
+def _install_event_logging() -> None:
+    """Mirror every event to a tail-able JSONL file and to stderr (host log panel).
+
+    Wired only when serving (run), so tests and in-process use stay side-effect free.
+    """
+    path = _event_log_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    def _sink(event) -> None:
+        try:
+            with open(path, "a") as f:
+                f.write(json.dumps(event.model_dump(mode="json")) + "\n")
+        except OSError:
+            pass
+        print(f"[opayai] #{event.seq} {event.type} {event.actor} {event.payload}",
+              file=sys.stderr, flush=True)
+
+    bus.subscribe(_sink)
+
+
 def run() -> None:
+    _install_event_logging()
     app.run()
 
 

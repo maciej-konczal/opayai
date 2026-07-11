@@ -2,7 +2,10 @@
   "mcpServers": {
     "opayai": {
       "command": "/Users/maciejkonczal/Documents/Projects/opayai/.venv/bin/python",
-      "args": ["-m", "opayai.server"]
+      "args": ["-m", "opayai.server"],
+      "env": {
+        "OPAYAI_EVENT_LOG": "/Users/maciejkonczal/Documents/Projects/opayai/opayai-events.jsonl"
+      }
     }
   }
 }
