@@ -1,15 +1,27 @@
-# MCP tool contract
+# Unified OPayAI MCP tool contract
 
 ```text
-search_products({query, category?, max_price?})
 draft_intent({description})
-request_purchase({intent_id, sku, qty})
-get_purchase_status({purchase_id})
-initiate_return({purchase_id, reason})
+search_offers({query?, category?, max_price?, intent_id?})
+suggest_offers({intent_id, limit?})
+propose_cart({intent_id, offer_id, qty?})
+evaluate_policy({purchase_id})
+get_order({purchase_id, since?})
+create_return({purchase_id, reason})
 list_purchases({})
+get_audit_trail({purchase_id})
+get_notifications({purchase_id?, since?})
 get_evidence_bundle({purchase_id})
 ```
 
-`request_purchase` and `initiate_return` can only return a proposal or
-`awaiting_human_authorization`. There is deliberately no authorization,
-approval, signature, confirmation, or payment MCP tool.
+This is the only MCP surface in the repository. It retains the teammate
+prototype's discover → suggest → propose → evaluate → track → resolve language,
+while using the OPayAI PLN/BLIK lifecycle and evidence model.
+
+`draft_intent`, `propose_cart`, and `create_return` can only create drafts or
+return `awaiting_human_authorization`. `evaluate_policy` is read-only: policy is
+executed deterministically inside the service before merchant actions.
+
+There is deliberately no MCP tool for authorization, approval, signing,
+passkeys, payment confirmation, order advancement, or resolution approval.
+Those actions belong to the human UI or internal merchant/demo surfaces.
