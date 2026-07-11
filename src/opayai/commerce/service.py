@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -29,7 +30,7 @@ from webauthn.helpers.structs import (AuthenticatorAttachment,
                                      UserVerificationRequirement)
 
 
-class MandateLoopService:
+class OPayAIService:
     def __init__(self, state_dir: Path):
         self.store = Store(state_dir / "state.json")
         self.ledger = Ledger(state_dir / "ledger.jsonl")
@@ -41,6 +42,7 @@ class MandateLoopService:
         self.rp_id = os.getenv("WEBAUTHN_RP_ID", "localhost")
         configured_origin = os.getenv("WEBAUTHN_ORIGIN")
         self.expected_origin = configured_origin or ["http://localhost:5173", "http://localhost:8000"]
+        self._payment_lock = threading.Lock()
 
     def _event(self, actor: str, type_: str, purchase_id: str | None = None, **payload: Any) -> None:
         if purchase_id:
@@ -76,7 +78,7 @@ class MandateLoopService:
                 return_days = candidate
                 break
         return Constraints(max_total=amount, categories=categories, min_return_window_days=return_days,
-                           expiry=MandateLoopService._expiry())
+                           expiry=OPayAIService._expiry())
 
     def draft_intent(self, description: str, agent_id: str = "webapp") -> IntentMandate:
         intent = IntentMandate(id=self.store.next_id("im"), agent_id=agent_id,
@@ -158,11 +160,16 @@ class MandateLoopService:
         if not context:
             raise ValueError("Signing context expired; request a new challenge.")
         body = context["body"]
+        signed_at = now_iso()
+        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+        body_hash = challenge_b64(body)
         if self.auth_mode == "demo_key":
             supplied = assertion.get("assertion_b64") or demo_assertion(body)
             verified = verify_demo_assertion(body, supplied)
-            signing = WebAuthnSigning(method="demo_key", credential_id=assertion.get("credential_id", "demo-device"),
-                                      assertion_b64=supplied, verified=verified, signed_at=now_iso())
+            signing = WebAuthnSigning(
+                method="demo_key", credential_id=assertion.get("credential_id", "demo-device"),
+                assertion_b64=supplied, body_hash=body_hash, verified=verified,
+                signed_at=signed_at, expires_at=expires_at)
         else:
             credential_id = assertion.get("id", "")
             stored = self.store.webauthn_credentials.get(credential_id)
@@ -177,8 +184,10 @@ class MandateLoopService:
             stored["sign_count"] = verification.new_sign_count
             supplied = base64.b64encode(canonical_json(assertion).encode()).decode()
             verified = verification.user_verified
-            signing = WebAuthnSigning(method="webauthn", credential_id=credential_id,
-                                      assertion_b64=supplied, verified=verified, signed_at=now_iso())
+            signing = WebAuthnSigning(
+                method="webauthn", credential_id=credential_id,
+                assertion_b64=supplied, body_hash=body_hash, verified=verified,
+                signed_at=signed_at, expires_at=expires_at)
         if not verified:
             raise ValueError("Approval assertion did not verify.")
         if context_type == "intent":
@@ -201,6 +210,7 @@ class MandateLoopService:
             self._event("merchant", "notification", purchase.id, message="Return approved. Shipping code: OPAY-RETURN-482913")
         else:
             raise ValueError("Unsupported signing context.")
+        self.store.signing_contexts.pop(key, None)
         self.store.save()
         return signing
 
@@ -277,10 +287,9 @@ class MandateLoopService:
 
     def select_rail(self, purchase_id: str, rail: str, base_url: str) -> dict[str, Any]:
         purchase = self.store.purchases[purchase_id]
-        if not purchase.cart or not purchase.cart.signing or not purchase.cart.signing.verified:
-            raise PolicyBlock("cart_not_signed", "A human must sign this exact cart before payment.")
+        offer = self._assert_current_cart_authorization(purchase)
         intent = self.store.intents[purchase.intent_id]
-        offer = self._find_offer(purchase.cart.line_items[0].sku)
+        assert purchase.cart
         self._policy(intent, "payment_init", purchase.id, offer, purchase.cart.totals["total"], rail)
         try:
             session = self.rails[rail].init(purchase.cart.totals["total"])
@@ -294,30 +303,63 @@ class MandateLoopService:
         return {"payment": payment.model_dump(mode="json"), "pay_url": f"{base_url}/pay/blik/{session.id}"}
 
     def blik_decision(self, session_id: str, decision: str, channel: str = "phone_page") -> Purchase:
-        rail = self.rails["blik_lite"]
-        session = rail.decide(session_id, decision)
-        purchase = next(p for p in self.store.purchases.values() if p.payment and p.payment.rail_ref == session_id)
-        assert purchase.payment and purchase.cart
-        payment = purchase.payment
-        if session.status == "confirmed":
-            payment.status = "succeeded"
-            payment.attempts.append({"ts": now_iso(), "result": "confirmed", "detail": f"BLIK confirmation via {channel}"})
-            purchase.status, purchase.order_status = "tracking", "paid"
-            purchase.order = {"id": self.store.next_id("ord"), "status": "paid", "line_items_shipped": [item.model_dump() for item in purchase.cart.line_items]}
-            intent = self.store.intents[purchase.intent_id]
-            intent.spent_total += payment.amount
-            self._event("rail", "payment_confirmed", purchase.id, payment_id=payment.id,
-                        session_id=session_id, channel=channel)
-            self._event("merchant", "status_change", purchase.id, order_status="paid")
-            self._event("merchant", "notification", purchase.id, message="BLIK payment confirmed. Order accepted.")
-        else:
-            payment.status = "failed"
-            payment.attempts.append({"ts": now_iso(), "result": session.status, "detail": "BLIK phone decision"})
-            purchase.status, purchase.order_status = "await_retry", "payment_failed"
-            self._event("rail", "payment_failed", purchase.id, payment_id=payment.id, result=session.status)
-            self._event("system", "notification", purchase.id, message="Payment declined. Would you like to try again?")
-        self.store.save()
-        return purchase
+        with self._payment_lock:
+            rail = self.rails["blik_lite"]
+            purchase = next(
+                p for p in self.store.purchases.values()
+                if p.payment and p.payment.rail_ref == session_id)
+            assert purchase.payment and purchase.cart
+            payment = purchase.payment
+            if payment.status != "pending":
+                raise PolicyBlock("payment_not_pending", "This BLIK session is no longer pending.")
+            if decision == "confirm":
+                offer = self._assert_current_cart_authorization(purchase)
+                intent = self.store.intents[purchase.intent_id]
+                self._policy(intent, "payment_confirm", purchase.id, offer,
+                             purchase.cart.totals["total"], payment.rail)
+            session = rail.decide(session_id, decision)
+            if session.status == "confirmed":
+                payment.status = "succeeded"
+                payment.attempts.append({"ts": now_iso(), "result": "confirmed", "detail": f"BLIK confirmation via {channel}"})
+                purchase.status, purchase.order_status = "tracking", "paid"
+                purchase.order = {"id": self.store.next_id("ord"), "status": "paid", "line_items_shipped": [item.model_dump() for item in purchase.cart.line_items]}
+                intent = self.store.intents[purchase.intent_id]
+                intent.spent_total += payment.amount
+                offer.stock -= purchase.cart.line_items[0].qty
+                self._event("rail", "payment_confirmed", purchase.id, payment_id=payment.id,
+                            session_id=session_id, channel=channel)
+                self._event("merchant", "status_change", purchase.id, order_status="paid")
+                self._event("merchant", "notification", purchase.id, message="BLIK payment confirmed. Order accepted.")
+            else:
+                payment.status = "failed"
+                payment.attempts.append({"ts": now_iso(), "result": session.status, "detail": "BLIK phone decision"})
+                purchase.status, purchase.order_status = "await_retry", "payment_failed"
+                self._event("rail", "payment_failed", purchase.id, payment_id=payment.id, result=session.status)
+                self._event("system", "notification", purchase.id, message="Payment declined. Would you like to try again?")
+            self.store.save()
+            return purchase
+
+    def _assert_current_cart_authorization(self, purchase: Purchase, require_stock: bool = True) -> Offer:
+        if not purchase.cart or not purchase.cart.signing or not purchase.cart.signing.verified:
+            raise PolicyBlock("cart_not_signed", "A human must sign this exact cart before payment.")
+        signing = purchase.cart.signing
+        if datetime.fromisoformat(signing.expires_at) < datetime.now(timezone.utc):
+            raise PolicyBlock("cart_authorization_expired", "The exact-cart authorization has expired.")
+        body = purchase.cart.model_dump(mode="json", exclude={"signing"})
+        if signing.body_hash != challenge_b64(body):
+            raise PolicyBlock("cart_authorization_mismatch", "The signed cart changed after authorization.")
+        if purchase.cart.totals != purchase.proposal.get("totals"):
+            raise PolicyBlock("proposal_drift", "Signed cart totals differ from the checkout proposal.")
+        if len(purchase.cart.line_items) != 1:
+            raise PolicyBlock("cart_integrity", "The demo cart must contain exactly one line item.")
+        item = purchase.cart.line_items[0]
+        offer = self._find_offer(item.sku)
+        expected_total = item.unit_price * item.qty
+        if item.unit_price != offer.price or purchase.cart.totals["total"] != expected_total:
+            raise PolicyBlock("price_drift", "The signed item price no longer matches the merchant offer.")
+        if require_stock and offer.stock < item.qty:
+            raise PolicyBlock("out_of_stock", "Insufficient stock at payment time.")
+        return offer
 
     def confirm_blik_in_chat(self, purchase_id: str, code: str) -> Purchase:
         if len(code) != 6 or not code.isdigit():
@@ -346,13 +388,9 @@ class MandateLoopService:
     def merchant_confirm_checkout(self, purchase_id: str) -> dict[str, Any]:
         purchase = self.store.purchases[purchase_id]
         intent = self.store.intents[purchase.intent_id]
-        if not purchase.cart or not purchase.cart.signing or not purchase.cart.signing.verified:
-            raise PolicyBlock("cart_not_signed", "Merchant requires a verified human cart signature.")
+        offer = self._assert_current_cart_authorization(purchase, require_stock=False)
         if not purchase.payment or purchase.payment.status != "succeeded":
             raise PolicyBlock("payment_not_succeeded", "Merchant requires a succeeded payment mandate.")
-        if purchase.cart.totals != purchase.proposal.get("totals"):
-            raise PolicyBlock("proposal_drift", "Signed cart totals differ from the checkout proposal.")
-        offer = self._find_offer(purchase.cart.line_items[0].sku)
         # Budget was consumed exactly once when BLIK succeeded; confirmation
         # re-checks category/rail without charging the cumulative limit again.
         self._policy(intent, "merchant_checkout_confirm", purchase.id, offer,
@@ -372,7 +410,7 @@ class MandateLoopService:
         if purchase.order_status not in {"return_requested", "return_in_transit"}:
             raise PolicyBlock("return_not_available", "Order is not in an approved return state.")
         return {"return_id": f"ret_{purchase.id}", "reason": reason,
-                "locker_dropoff_code": "ML-RETURN-482913"}
+                "locker_dropoff_code": "OPAY-RETURN-482913"}
 
     def merchant_refund(self, purchase_id: str) -> dict[str, Any]:
         purchase = self.store.purchases[purchase_id]

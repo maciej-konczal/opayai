@@ -1,1 +1,0 @@
-"""MandateLoop FastAPI implementation."""

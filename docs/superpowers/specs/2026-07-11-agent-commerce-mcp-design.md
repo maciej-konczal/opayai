@@ -1,4 +1,7 @@
-# Agent Commerce MCP - Design
+# Agent Commerce MCP - Historical prototype design
+
+> Superseded by the unified OPayAI server. The active contract is
+> `contracts/mcp-tools.md`; the only server entrypoint is `opayai.server`.
 
 **Date:** 2026-07-11
 **Challenge:** BOSKI hackathon - "Agent Commerce: purchasing when the user is not in the tab."

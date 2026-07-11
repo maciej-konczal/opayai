@@ -1,110 +1,40 @@
+"""Small CLI front door for the unified OPayAI service.
+
+The CLI may draft a mandate, but consent and payment stay in the web UI. This
+keeps the same prompt-first ergonomics as the teammate prototype without
+creating a second, less-safe purchase path.
+"""
 from __future__ import annotations
+
 import os
-from typing import Callable
+from pathlib import Path
+
 import typer
 from rich.console import Console
-from rich.markup import escape
-from opayai import server, recommend, channels
-from opayai.data import load_persona
-from opayai.events import bus
-from opayai.front_door import parse_prompt
-from opayai.types import Constraint
+
+from opayai.server import default_service
+
 
 console = Console()
 
 
-def auto_pick(offers: list[dict], constraint: Constraint) -> list[str]:
-    ranked = recommend.suggest(offers, constraint, limit=len(offers) or 1)
-    winners = [s["offer_id"] for s in ranked if s["qualifies"]]
-    return winners[:1]
-
-
-def _render(event) -> None:
-    console.print(f"[dim]#{event.seq}[/dim] [bold cyan]{event.type}[/bold cyan] "
-                  f"[magenta]{event.actor}[/magenta] {escape(str(event.payload))}")
-
-
-def run_flow(prompt: str, approve: Callable[[dict, dict], bool],
-             do_return: bool = False, client=None,
-             step_up_threshold: str | None = None) -> dict:
-    persona = load_persona()
-    constraint, limit = parse_prompt(prompt, persona, client=client)
-    intent = server.create_intent_mandate(
-        user_id=persona["id"], category=constraint.category,
-        max_total=str(constraint.max_total.amount),
-        hard_requirements=constraint.hard_requirements,
-        per_transaction=str(limit.per_transaction.amount),
-        per_period=str(limit.per_period.amount),
-        step_up_threshold=step_up_threshold)
-    offers = server.search_offers(category=constraint.category,
-                                  max_price=str(constraint.max_total.amount))
-    picked = auto_pick(offers, constraint)
-    if not picked:
-        return {"intent": intent, "cart": None, "decision": None, "order": None}
-    cart = server.propose_cart(intent_id=intent["id"], offer_ids=picked,
-                               rail="ap2", rationale="best rated within constraints")
-    decision = server.evaluate_policy(cart_id=cart["id"])
-    if decision["result"] == "REJECT":
-        return {"intent": intent, "cart": cart, "decision": decision, "order": None}
-    if decision["result"] == "ESCALATE":
-        approved = approve(cart, decision)
-        server.request_approval(cart_id=cart["id"], approved=approved)
-        if not approved:
-            return {"intent": intent, "cart": cart, "decision": decision, "order": None}
-    if decision.get("step_up_required"):
-        console.print(f"[yellow]STEP-UP[/yellow] over threshold - authorizing with passkey "
-                      f"(total {cart['total']['amount']})")
-        auth = server.authorize_step_up(cart_id=cart["id"])
-        if not auth.get("authorized"):
-            return {"intent": intent, "cart": cart, "decision": decision, "order": None}
-    order = server.execute_payment(cart_id=cart["id"])
-    receipt_ref = order["receipt"]["rail_reference"]
-    server.advance_order(order["id"])
-    order = server.advance_order(order["id"])  # -> DELIVERED
-    if do_return:
-        order = server.create_return(order_id=order["id"], reason="changed my mind")
-    return {"intent": intent, "cart": cart, "decision": decision,
-            "order": order, "receipt_reference": receipt_ref}
-
-
-def _maybe_client():
-    """Return an Anthropic client if a key is set and the SDK is importable, else None.
-
-    Guarded so the demo always works offline via the heuristic front door.
-    """
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return None
-    try:
-        import anthropic
-        return anthropic.Anthropic()
-    except Exception:
-        return None
+def run_flow(prompt: str, service=None) -> dict:
+    runtime = service or default_service()
+    intent = runtime.draft_intent(prompt, agent_id="cli")
+    return {
+        "intent": intent.model_dump(mode="json"),
+        "status": "awaiting_human_authorization",
+        "web_url": os.getenv("OPAYAI_WEB_BASE", "http://localhost:8000"),
+    }
 
 
 def main(prompt: str = typer.Argument(
-        "Find me the best monitor under $300 that works with my MacBook, "
-        "arrives tomorrow, and has good return terms. Buy it if you're confident."),
-        do_return: bool = typer.Option(False, "--return"),
-        step_up: str = typer.Option(None, "--step-up",
-            help="Require a passkey for carts at/above this amount, e.g. --step-up 250")) -> None:
-    def approve(cart: dict, decision: dict) -> bool:
-        console.print(f"[yellow]APPROVAL NEEDED[/yellow] total={cart['total']['amount']} "
-                      f"rail={cart['selected_rail']}")
-        return typer.confirm("Approve this purchase?")
-    client = _maybe_client()
-    console.print(f"[dim]front door: {'Claude' if client else 'offline heuristic'}[/dim]")
-    bus.subscribe(_render)
-    channels.install(bus)   # webhook = full event feed; desktop/email = action pings
-    result = run_flow(prompt, approve=approve, do_return=do_return, client=client,
-                      step_up_threshold=step_up)
-    console.rule("[bold green]RESULT")
-    if result["order"]:
-        console.print(f"Order [bold]{result['order']['id']}[/bold] "
-                      f"status=[green]{result['order']['status']}[/green]")
-    elif result["decision"] is None:
-        console.print("[red]No purchase[/red] - No matching offer found")
-    else:
-        console.print(f"[red]No purchase[/red] - policy {result['decision']['result']}")
+        "Buy me a 27-inch USB-C monitor under PLN 1,200 with at least 14-day returns.")) -> None:
+    result = run_flow(prompt)
+    intent = result["intent"]
+    console.print(f"[bold cyan]Intent {intent['id']} drafted[/bold cyan]")
+    console.print("OPayAI will not sign or pay from the CLI.")
+    console.print(f"Open [link={result['web_url']}]{result['web_url']}[/link] to review and sign.")
 
 
 if __name__ == "__main__":

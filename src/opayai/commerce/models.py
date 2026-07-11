@@ -28,8 +28,10 @@ class WebAuthnSigning(BaseModel):
     credential_id: str
     assertion_b64: str
     challenge_derivation: str = "sha256(canonical_json(body))"
+    body_hash: str
     verified: bool
     signed_at: str
+    expires_at: str
 
 
 class IntentMandate(BaseModel):

@@ -11,8 +11,7 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
 RUN pip install --no-cache-dir .
-COPY backend/ ./backend/
 COPY contracts/ ./contracts/
 COPY --from=web-build /app/web/dist ./web/dist/
 EXPOSE 8000
-CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "opayai.server:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

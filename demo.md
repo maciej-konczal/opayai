@@ -3,7 +3,7 @@
 Run the API from the repository root:
 
 ```bash
-uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+uvicorn opayai.server:create_app --factory --host 0.0.0.0 --port 8000
 ```
 
 Run the web app in another terminal:
@@ -21,7 +21,7 @@ Touch ID/Windows Hello, start the backend with:
 
 ```bash
 AUTH_MODE=webauthn WEBAUTHN_ORIGIN=http://localhost:5173 \
-  uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+  uvicorn opayai.server:create_app --factory --host 0.0.0.0 --port 8000
 ```
 
 Use `localhost` for WebAuthn. On mobile, **Pay in chat** opens the BLIK
@@ -52,23 +52,23 @@ On desktop, the checkout sheet still exposes a QR/link as a cross-device fallbac
 
 1. Before confirming BLIK, arm **Decline BLIK**. The first phone confirmation
    fails; use **Try again** for a fresh BLIK session.
-2. Hit **REVOKE MANDATE**. A later MCP `request_purchase` returns
+2. Hit **REVOKE MANDATE**. A later MCP `propose_cart` returns
    `blocked: mandate_not_open`.
 
 ## MCP smoke test
 
 Connect an MCP client to the streamable HTTP endpoint at
-`http://localhost:8000/mcp`. Its only purchase tool, `request_purchase`,
-returns `awaiting_human_authorization`; approval, payment and return consent do
-not exist in the MCP surface.
+`http://localhost:8000/mcp`. `propose_cart` and `create_return` only return
+proposals or `awaiting_human_authorization`; approval, signing, payment,
+fulfillment advancement, and return consent do not exist in the MCP surface.
 
 ## Single-process package
 
 Once Docker Desktop is running:
 
 ```bash
-docker build -t mandateloop:demo .
-docker run --rm -p 8000:8000 mandateloop:demo
+docker build -t opayai:demo .
+docker run --rm -p 8000:8000 opayai:demo
 ```
 
 Open `http://localhost:8000/?demo=1`; the FastAPI process serves the built React

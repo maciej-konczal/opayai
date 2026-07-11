@@ -23,6 +23,27 @@ def notification_for(event: dict) -> dict | None:
     """Map one event to a user-facing notification, or None if not noteworthy."""
     t = event.get("type", "")
     p = event.get("payload", {})
+    if t == "intent_drafted":
+        return _n("Review your purchase mandate",
+                  "OPayAI drafted the boundaries. Review and sign them to continue.",
+                  True, event)
+    if t == "suggestions_ready":
+        return _n("Options ready to choose",
+                  f"{p.get('count', 'A few')} options are ready. Pick one to continue.",
+                  True, event)
+    if t == "cart_proposed":
+        return _n("Exact cart needs approval",
+                  "Review the product, price, delivery, and return terms before signing.",
+                  True, event)
+    if t == "policy_block":
+        return _n("Purchase blocked",
+                  f"Policy clause {p.get('clause', 'unknown')} stopped this action.",
+                  True, event)
+    if t == "notification":
+        body = str(p.get("message", "Purchase update"))
+        action = any(token in body.lower() for token in (
+            "waiting for your approval", "would you like", "recommended"))
+        return _n("Action needed" if action else "Purchase update", body, action, event)
     if t == "suggestions.ready":
         return _n("Options ready to choose",
                   f"{p.get('count', 'A few')} options match - pick one to continue.",

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mandateloop.local/contracts/mandateloop.schema.json",
-  "title": "MandateLoop shared objects",
+  "$id": "https://opayai.local/contracts/opayai.schema.json",
+  "title": "OPayAI shared objects",
   "definitions": {
     "Constraints": {
       "type": "object",

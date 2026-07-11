@@ -10,10 +10,10 @@ from sse_starlette.sse import EventSourceResponse
 
 from .models import Constraints
 from .policy import PolicyBlock
-from .service import MandateLoopService
+from .service import OPayAIService
 
 
-def _service(request: Request) -> MandateLoopService:
+def _service(request: Request) -> OPayAIService:
     return request.app.state.service
 
 

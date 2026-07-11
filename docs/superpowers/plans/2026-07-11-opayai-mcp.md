@@ -1,4 +1,7 @@
-# opayai-mcp Implementation Plan
+# opayai-mcp implementation plan — historical
+
+> Superseded by the unified OPayAI server. The active contract is
+> `contracts/mcp-tools.md`; the only server entrypoint is `opayai.server`.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

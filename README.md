@@ -1,20 +1,37 @@
 # OPayAI
 
-OPayAI gives any MCP-capable agent safe purchasing capability over a
-mocked Polish store, with mobile chat as the primary human surface:
+OPayAI is one agent-commerce server for the full Polish purchase lifecycle:
 
-intent → human approval → in-chat BLIK → tracking → keep or return → evidence.
+intent → suggest → human approval → in-chat BLIK → tracking → keep or return → evidence.
 
-The agent may propose and track, but it can never consent. The OPayAI MCP
-server deliberately has no `authorize_payment`, `sign_mandate`,
-`approve_return`, or `confirm_delivery` tool.
+It combines the teammate prototype's MCP vocabulary, ranked suggestions, CLI
+front door, and proactive notification channels with the mobile UI, real
+WebAuthn option, PLN/BLIK rail, paczkomat lifecycle, deterministic policy,
+exceptions, refunds, and hash-chained evidence.
+
+There is now one installable package (`src/opayai`), one MCP implementation
+(`opayai.server`), and one process for the web app, REST/SSE, BLIK page, merchant
+mock, and streamable HTTP MCP.
+
+## Trust boundary
+
+The agent can search, suggest, propose, evaluate, track, and propose a return.
+It cannot sign, approve, confirm BLIK, advance fulfillment, or approve a
+resolution. Those actions are deliberately absent from MCP and remain on the
+human UI or internal merchant/demo surfaces.
+
+Both signing modes bind consent to
+`sha256(canonical_json(body))`:
+
+- `AUTH_MODE=demo_key` — deterministic Ed25519 hackathon mode.
+- `AUTH_MODE=webauthn` — platform WebAuthn with user verification.
 
 ## Run locally
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+.venv/bin/uvicorn opayai.server:create_app --factory --host 0.0.0.0 --port 8000
 
 # second terminal
 cd web
@@ -22,39 +39,45 @@ npm install
 npm run dev -- --host 0.0.0.0
 ```
 
-Open `http://localhost:5173/?demo=1`. See [demo.md](demo.md) for the rehearsed
-flows. MCP clients connect to `http://localhost:8000/mcp`.
+Open `http://localhost:5173/?demo=1`. MCP clients connect to
+`http://localhost:8000/mcp`. Cursor uses the same implementation over stdio via
+the committed `.cursor/mcp.json`.
+
+## Single MCP surface
+
+| Tool | Role |
+|---|---|
+| `draft_intent` | Draft constraints; waits for the human signature |
+| `search_offers` | Search PLN offers and expose policy-blocked alternatives |
+| `suggest_offers` | Deterministic shortlist with match/block reasons |
+| `propose_cart` | Propose the exact cart; waits for human authorization |
+| `evaluate_policy` | Read the deterministic policy result |
+| `get_order` | Track lifecycle events and exceptions |
+| `create_return` | Propose a return; waits for a signed resolution |
+| `list_purchases` | List current purchases |
+| `get_audit_trail` | Read and validate the hash-chained trail |
+| `get_notifications` | Pull action-needed and progress notifications |
+| `get_evidence_bundle` | Export signed, dispute-grade close-out evidence |
 
 ## Implemented
 
-- Frozen `contracts/` boundary and fixtures.
-- FastAPI REST, policy-checked merchant routes, SSE ledger, and streamable MCP.
-- PLN catalog with monitors and winter tires, including visibly filtered offers.
-- Stable policy clauses, revocation, and cumulative per-mandate budgets.
-- Real WebAuthn plus the reliable Ed25519 `demo_key` fallback; both bind approval
-  to `sha256(canonical_json(body))`.
-- Mobile chat from request through product choice, exact-cart approval, in-chat
-  BLIK, paczkomat tracking, keep/return, exception resolution, refund, and evidence.
-- Desktop audit view with QR/link as a cross-device fallback.
-- Hash-chained ledger and downloadable evidence bundle.
-- Dockerfile for a single process serving the built React app and backend.
+- PLN catalog with monitors and winter tires, including visible rejected offers.
+- Stable policy clauses, revocation, and cumulative mandate budgets.
+- Cart-bound delivery and return-policy snapshots.
+- BLIK Lite with an in-chat human prompt and separate-phone fallback.
+- Paczkomat pickup, keep/return decision, wrong-item diff, return, and refund.
+- Full-stream webhook plus desktop/email action-needed notification adapters.
+- Hash-chained ledger, SSE event feed, and downloadable evidence bundle.
+- English OPayAI mobile chat and desktop audit interface.
+- Docker single-process build.
 
-## Signing modes
+See [demo.md](demo.md) for the rehearsed scenarios and
+[contracts/mcp-tools.md](contracts/mcp-tools.md) for the source-of-truth MCP
+contract.
 
-`AUTH_MODE=demo_key` is the default hackathon mode. Set `AUTH_MODE=webauthn` to
-use Touch ID/Windows Hello on `localhost`; user verification is required. Both
-modes store the complete assertion in the evidence bundle.
-
-## Demo limitations
+## Honest limitations
 
 BLIK, merchant fulfillment, refunds, and notification delivery are local mocks.
-These are AP2-shaped mandates and an MPP-shaped handshake, not a claim of wire
-compatibility. There is one demo user and no delegated mode.
-
-## Teammate prototype retained
-
-The generic prototype remains under `src/opayai/`. The latest `main` additions
-are merged here: agents present options and wait by default, Cursor receives the
-same rule, and webhook subscribers receive the full event feed with action-needed
-notifications. Those legacy tools are not mounted at OPayAI's `/mcp`;
-OPayAI's contract-safe implementation lives in `backend/` and `web/`.
+The mandates are AP2-inspired and the payment handshake is MPP-shaped; OPayAI
+does not claim wire compatibility with either protocol. There is one demo user
+and no delegated or human-not-present purchase mode.

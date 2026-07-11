@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 from .crypto import canonical_json, now_iso
@@ -17,6 +18,7 @@ class Ledger:
         self.snapshot_path = snapshot_path
         self.events: list[OrderEvent] = []
         self.subscribers: list[asyncio.Queue[OrderEvent]] = []
+        self.callbacks: list[Callable[[OrderEvent], None]] = []
         if snapshot_path.exists():
             for line in snapshot_path.read_text().splitlines():
                 if line.strip():
@@ -35,6 +37,8 @@ class Ledger:
             log.write(event.model_dump_json() + "\n")
         for queue in tuple(self.subscribers):
             queue.put_nowait(event)
+        for callback in tuple(self.callbacks):
+            callback(event)
         return event
 
     def verify(self, events: list[OrderEvent] | None = None) -> bool:
@@ -50,14 +54,19 @@ class Ledger:
     def for_purchase(self, purchase_id: str) -> list[OrderEvent]:
         return [event for event in self.events if event.payload.get("purchase_id") == purchase_id]
 
-    def subscribe(self) -> asyncio.Queue[OrderEvent]:
+    def subscribe(self, callback: Callable[[OrderEvent], None] | None = None):
+        if callback is not None:
+            self.callbacks.append(callback)
+            return callback
         queue: asyncio.Queue[OrderEvent] = asyncio.Queue()
         self.subscribers.append(queue)
         return queue
 
-    def unsubscribe(self, queue: asyncio.Queue[OrderEvent]) -> None:
+    def unsubscribe(self, queue) -> None:
         if queue in self.subscribers:
             self.subscribers.remove(queue)
+        if queue in self.callbacks:
+            self.callbacks.remove(queue)
 
     def reset(self) -> None:
         self.events.clear()

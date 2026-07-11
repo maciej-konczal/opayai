@@ -1,4 +1,4 @@
-# MandateLoop contracts
+# OPayAI contracts
 
 These JSON documents are the shared boundary between `backend/` and `web/`.
 They intentionally contain no implementation imports. Update a contract before

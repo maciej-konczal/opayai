@@ -1,331 +1,268 @@
+"""The single public OPayAI MCP server.
+
+The teammate prototype established the discover → suggest → propose → evaluate →
+track → resolve vocabulary and proactive notification seams. This module keeps
+that host-facing contract while delegating execution to the PLN/BLIK lifecycle
+service used by the web app. Human consent is intentionally absent from MCP.
+"""
 from __future__ import annotations
-import json
+
 import os
-import sys
-import threading
-from decimal import Decimal
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
+
+from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from mcp.server.fastmcp import FastMCP
-from opayai.types import Constraint, Money, SpendingLimit
-from opayai import mandate as mandate_mod
-from opayai import data, rails as rails_mod
-from opayai.mandate import create_intent_mandate as _create_intent, propose_cart as _propose
-from opayai.policy import evaluate_policy as _evaluate
-from opayai.orders import store as order_store
-from opayai.events import bus
-from opayai import stepup, recommend, notify, channels, authorization
 
-_INSTRUCTIONS = """opayai is an agent-commerce backbone. Default flow:
-1. Call create_intent_mandate FIRST (constraints, spending limits, optional step_up_threshold).
-2. When the user is shopping, call suggest_offers and PRESENT the ranked options
-   (with their match_reason) to the user, then WAIT for them to choose. Do NOT call
-   propose_cart or execute_payment until the user picks - UNLESS the user explicitly
-   says to buy autonomously (e.g. "just buy it", "complete the purchase", "pick the best").
-3. Always run evaluate_policy before execute_payment. If it returns step_up_required,
-   call authorize_step_up (passkey). If the result is ESCALATE, ask the user, then
-   request_approval. Never call execute_payment while a gate is unmet.
-4. Tell the user about any action-needed step (choose / approve / passkey) and surface
-   the status_url returned by execute_payment/get_order so they can track the order."""
-
-app = FastMCP("opayai-mcp", instructions=_INSTRUCTIONS)
-
-SESSION: dict = {}
-_PAYMENT_LOCK = threading.Lock()
+from opayai.commerce.api import router as api_router
+from opayai.commerce.merchant import router as merchant_router
+from opayai.commerce.policy import PolicyBlock
+from opayai.commerce.rails import lan_ip
+from opayai.commerce.service import OPayAIService
 
 
-def reset_session() -> None:
-    SESSION.clear()
-    SESSION.update({"intents": {}, "carts": {}, "offers": {}, "decisions": {},
-                    "approvals": {}, "stepups": {}, "paid": {},
-                    "period_spent": Decimal("0")})
-    mandate_mod.reset_ids()
-    rails_mod.reset_rail_ids()
+INSTRUCTIONS = """OPayAI is a human-controlled agent-commerce backbone.
+1. Draft an intent, then wait for the human to sign it in the OPayAI web app.
+2. Suggest qualifying and blocked offers with clear reasons, then wait for the
+   human to choose one before proposing a cart.
+3. A proposed cart always returns awaiting_human_authorization. The agent cannot
+   sign, approve, confirm BLIK, or advance fulfillment.
+4. Track the order and surface action-needed notifications. A return request is
+   also only a proposal until the human signs the exact resolution in the UI.
+"""
 
 
-reset_session()
+def _policy_error(error: PolicyBlock) -> dict[str, Any]:
+    return {"status": "blocked", "violated_clause": error.clause, "detail": error.detail}
 
 
-@app.tool()
-def search_offers(category: str | None = None, max_price: str | None = None) -> list[dict]:
-    """Search the catalog for agent-readable offers (raw list).
-
-    Returns structured offers (price, stock, delivery date, return policy, specs,
-    rating) the agent can reason over. Call this after create_intent_mandate to
-    find candidate products. `max_price` is a decimal string (e.g. "300").
-
-    If the user wants to SEE options and pick one (not buy autonomously), call
-    suggest_offers instead - it ranks candidates with a match_reason for the user
-    to choose from before propose_cart.
-    """
-    mp = Decimal(max_price) if max_price is not None else None
-    offers = data.search_offers(category=category, max_price=mp)
-    for o in offers:
-        SESSION["offers"][o.id] = o
-    return [o.model_dump(mode="json") for o in offers]
+def _offer_summary(offer: dict[str, Any], qualifies: bool, reason: str) -> dict[str, Any]:
+    return {
+        "offer_id": offer["sku"],
+        "title": offer["title"],
+        "price": {"amount": offer["price"], "currency": "PLN", "unit": "grosze"},
+        "delivery_method": offer["delivery_method"],
+        "delivery_estimate_days": offer["delivery_estimate_days"],
+        "return_window_days": offer["return_policy"]["window_days"],
+        "qualifies": qualifies,
+        "match_reason": reason,
+    }
 
 
-@app.tool()
-def create_intent_mandate(user_id: str, category: str, max_total: str,
-                          hard_requirements: list[str], per_transaction: str,
-                          per_period: str, step_up_threshold: str | None = None) -> dict:
-    """Create and sign the user's Intent Mandate: what the agent is authorized to buy.
+def create_mcp(service: OPayAIService) -> FastMCP:
+    """Build the one MCP surface used by stdio hosts and `/mcp` HTTP clients."""
+    mcp = FastMCP("OPayAI", instructions=INSTRUCTIONS)
 
-    Call this FIRST, before any other tool. It encodes the user's constraints and
-    spending limits and is cryptographically signed. `hard_requirements` use the
-    tokens "free_returns", "compat:<tag>" (e.g. "compat:macbook"), and
-    "arrives_by:YYYY-MM-DD". `max_total`, `per_transaction`, `per_period` are
-    decimal strings. `step_up_threshold` (optional decimal string): carts at or
-    above it need a fresh passkey authorization (call authorize_step_up before
-    execute_payment). Returns the signed mandate; use its `id` in later calls.
-    """
-    threshold = Money(amount=Decimal(step_up_threshold)) if step_up_threshold else None
-    im = _create_intent(
-        user_id,
-        Constraint(max_total=Money(amount=Decimal(max_total)), category=category,
-                   hard_requirements=hard_requirements),
-        SpendingLimit(per_transaction=Money(amount=Decimal(per_transaction)),
-                      per_period=Money(amount=Decimal(per_period)),
-                      step_up_threshold=threshold))
-    SESSION["intents"][im.id] = im
-    return im.model_dump(mode="json")
+    @mcp.tool()
+    def draft_intent(description: str) -> dict:
+        """Draft purchase constraints; a human must sign them in the OPayAI UI."""
+        intent = service.draft_intent(description, agent_id="mcp")
+        return {
+            "intent_id": intent.id,
+            "status": "awaiting_human_authorization",
+            "parsed_constraints": intent.constraints.model_dump(mode="json"),
+            "next_action": "Ask the human to review and sign the intent in OPayAI.",
+        }
 
+    @mcp.tool()
+    def search_offers(query: str = "", category: str | None = None,
+                      max_price: int | None = None, intent_id: str | None = None) -> dict:
+        """Search the PLN catalog and disclose offers blocked by mandate policy."""
+        return service.search_products(query, category, max_price, intent_id)
 
-@app.tool()
-def suggest_offers(intent_id: str, limit: int = 3) -> list[dict]:
-    """Return a ranked shortlist of candidate offers for an intent, with reasons.
+    @mcp.tool()
+    def suggest_offers(intent_id: str, limit: int = 3) -> list[dict]:
+        """Return a deterministic shortlist with match and policy-block reasons."""
+        intent = service.store.intents[intent_id]
+        results = service.search_products(
+            query="", category=intent.constraints.categories[0], intent_id=intent_id)
+        suggestions: list[dict[str, Any]] = []
+        for offer in results["offers"]:
+            window = offer["return_policy"]["window_days"]
+            reason = (
+                f"Within the signed budget; {window}-day returns; "
+                f"delivery in {offer['delivery_estimate_days']} day(s)."
+            )
+            suggestions.append(_offer_summary(offer, True, reason))
+        for item in results["filtered_out"]:
+            offer = item["offer"]
+            suggestions.append(_offer_summary(
+                offer, False, f"Blocked by policy clause {item['violated_clause']}."))
+        service._event(
+            "agent", "suggestions_ready", intent_id=intent_id,
+            count=min(limit, len(suggestions)),
+            qualifying=sum(1 for item in suggestions[:limit] if item["qualifies"]),
+        )
+        return suggestions[:max(1, limit)]
 
-    Each item has qualifies (bool) and match_reason (why it fits, or why not -
-    over budget / out of stock / missing free returns / not compatible). Present
-    this list to the user and let them pick which offer_id to buy BEFORE calling
-    propose_cart. This does not purchase anything. Searches the whole category
-    (including over-budget/out-of-stock options) so the user sees the tradeoffs.
-    """
-    intent = SESSION["intents"][intent_id]
-    offers = data.search_offers(category=intent.constraint.category)
-    for o in offers:
-        SESSION["offers"][o.id] = o
-    shortlist = recommend.suggest([o.model_dump(mode="json") for o in offers],
-                                  intent.constraint, limit)
-    bus.publish("suggestions.ready", "agent",
-                {"count": len(shortlist),
-                 "qualifying": sum(1 for s in shortlist if s["qualifies"])},
-                mandate_ref=intent_id)
-    return shortlist
-
-
-@app.tool()
-def propose_cart(intent_id: str, offer_ids: list[str], rail: str, rationale: str) -> dict:
-    """Build and sign a Cart Mandate: the specific offers the agent wants to buy.
-
-    Call after search_offers, once you have chosen offer_ids that satisfy the
-    intent's hard requirements and budget. `rail` is the payment rail: "ap2" or
-    "card". `rationale` is a short human-readable reason shown to the user. The
-    cart MUST be checked with evaluate_policy before execute_payment.
-    """
-    intent = SESSION["intents"][intent_id]
-    offers = [SESSION["offers"][oid] for oid in offer_ids]
-    cart = _propose(intent, offers, rail=rail, rationale=rationale)
-    SESSION["carts"][cart.id] = cart
-    return cart.model_dump(mode="json")
-
-
-@app.tool()
-def evaluate_policy(cart_id: str) -> dict:
-    """Check a proposed cart against its intent mandate and spending limits.
-
-    Returns a decision: "AUTO_APPROVE" (safe to pay), "ESCALATE" (needs user
-    approval via request_approval), or "REJECT" (a hard rule failed), plus a
-    per-rule breakdown. You MUST call this before execute_payment.
-    """
-    cart = SESSION["carts"][cart_id]
-    intent = SESSION["intents"][cart.intent_mandate_id]
-    dec = _evaluate(intent, cart, SESSION["offers"], period_spent=SESSION["period_spent"])
-    SESSION["decisions"][cart_id] = dec
-    return dec.model_dump(mode="json")
-
-
-@app.tool()
-def request_approval(cart_id: str, approved: bool) -> dict:
-    """Record the user's approval decision for an escalated cart.
-
-    Call this only when evaluate_policy returned "ESCALATE", after you have asked
-    the user. execute_payment will refuse an escalated cart until approved=true
-    has been recorded here.
-    """
-    decision = SESSION["decisions"].get(cart_id)
-    if decision is None or decision.result != "ESCALATE":
-        raise ValueError("approval is only valid for an escalated policy decision")
-    cart = SESSION["carts"][cart_id]
-    proof = authorization.issue("approval", cart) if approved else None
-    if proof:
-        SESSION["approvals"][cart_id] = proof
-    else:
-        SESSION["approvals"].pop(cart_id, None)
-    bus.publish("approval.recorded", "user",
-                {"cart_id": cart_id, "approved": approved,
-                 "proof_id": proof["id"] if proof else None},
-                mandate_ref=SESSION["carts"][cart_id].intent_mandate_id)
-    return {"cart_id": cart_id, "approved": approved, "proof": proof}
-
-
-@app.tool()
-def authorize_step_up(cart_id: str) -> dict:
-    """Run the human-present passkey ceremony for a cart that requires step-up.
-
-    Call this when evaluate_policy returned step_up_required=true, before
-    execute_payment. Simulates the user's registered device (passkey) signing a
-    fresh challenge bound to this cart and amount, and verifies it. Returns
-    {authorized, device_pubkey}. execute_payment stays refused until this succeeds.
-    """
-    decision = SESSION["decisions"].get(cart_id)
-    if decision is None or not decision.step_up_required or decision.result == "REJECT":
-        raise ValueError("step-up is only valid for an eligible policy decision")
-    cart = SESSION["carts"][cart_id]
-    res = stepup.authorize(cart_id, str(cart.total.amount), cart.intent_mandate_id)
-    if res["authorized"]:
-        proof = authorization.issue("step_up", cart)
-        SESSION["stepups"][cart_id] = proof
-        res["proof"] = proof
-    return res
-
-
-@app.tool()
-def execute_payment(cart_id: str) -> dict:
-    """Charge the selected rail for an approved cart and create the order.
-
-    Only succeeds when the policy decision is AUTO_APPROVE, or an ESCALATE that
-    has a recorded approval. If the decision is step_up_required, a successful
-    authorize_step_up (passkey) is also required. Refuses REJECTs, unapproved
-    escalations, missing step-up, and a repeat payment of the same cart
-    (idempotency guard). Returns the created order (status PAID) with its receipt
-    and a `status_url` the user can click to view live order status - surface that
-    link to the user.
-    """
-    with _PAYMENT_LOCK:
-        cart = SESSION["carts"][cart_id]
-        if cart_id in SESSION["paid"]:
-            raise ValueError("cart already paid")
-        recorded = SESSION["decisions"].get(cart_id)
-        if recorded is None:
-            raise ValueError("evaluate_policy must run before payment")
-        intent = SESSION["intents"][cart.intent_mandate_id]
-        dec = _evaluate(intent, cart, SESSION["offers"],
-                        period_spent=SESSION["period_spent"], publish=False)
-        SESSION["decisions"][cart_id] = dec
-        if dec.result == "REJECT":
-            raise ValueError("policy rejected this cart")
-        if dec.result == "ESCALATE" and not authorization.verify(
-                SESSION["approvals"].get(cart_id), "approval", cart):
-            raise ValueError("cart requires valid user approval before payment")
-        if dec.step_up_required and not authorization.verify(
-                SESSION["stepups"].get(cart_id), "step_up", cart):
-            raise ValueError("cart requires valid step-up authorization before payment")
-        receipt = rails_mod.get_rail(cart.selected_rail).charge(cart)
-        offers = [SESSION["offers"][item.offer_id] for item in cart.items]
-        returns_window = min(o.returns_window_days for o in offers)
-        order = order_store.create(cart, receipt, returns_window_days=returns_window)
-        SESSION["paid"][cart_id] = order.id
-        SESSION["period_spent"] += cart.total.amount
-        d = order.model_dump(mode="json")
-        d["status_url"] = f"{_web_base()}/order/{order.id}"
-        return d
-
-
-@app.tool()
-def advance_order(order_id: str) -> dict:
-    """Advance an order's fulfillment state: PAID -> SHIPPED -> DELIVERED.
-
-    Simulates and records fulfillment progress. Call twice to reach DELIVERED
-    (required before create_return).
-    """
-    return order_store.advance(order_id).model_dump(mode="json")
-
-
-@app.tool()
-def get_order(order_id: str) -> dict:
-    """Fetch the current status and event timeline of an order by id.
-
-    Includes `status_url`, a link the user can open to see live order status.
-    """
-    d = order_store.get(order_id).model_dump(mode="json")
-    d["status_url"] = f"{_web_base()}/order/{order_id}"
-    return d
-
-
-@app.tool()
-def cancel_order(order_id: str) -> dict:
-    """Cancel an order before it ships (allowed from CREATED or PAID only)."""
-    return order_store.cancel(order_id).model_dump(mode="json")
-
-
-@app.tool()
-def create_return(order_id: str, reason: str) -> dict:
-    """Request a return for a DELIVERED order within its returns window.
-
-    This is the post-purchase "resolve" step. Fails if the order is not delivered
-    or the return window has passed.
-    """
-    return order_store.request_return(order_id, reason).model_dump(mode="json")
-
-
-@app.tool()
-def get_audit_trail(mandate_ref: str | None = None) -> list[dict]:
-    """Return the full audit event trail for a mandate (pass the intent id).
-
-    Every event - intent, cart, policy decision, approval, payment, and the whole
-    order lifecycle through returns - is included in order. This is the receipt of
-    what the system recorded about user authorization and execution. The Intent
-    and Cart Mandates and authorization proofs are signed; the event stream itself
-    is not a cryptographic ledger. Omit mandate_ref for all events.
-    """
-    return [e.model_dump(mode="json") for e in bus.trail(mandate_ref)]
-
-
-@app.tool()
-def get_notifications(mandate_ref: str | None = None) -> list[dict]:
-    """Proactive, user-facing notifications derived from the event stream.
-
-    Each has needs_action (bool) and level ("action_required" | "update"). Surface
-    the needs_action items FIRST and tell the user - these are the moments the
-    agent needs input, approval, a passkey, or a decision (which option to buy).
-    The rest are progress updates (payment, shipped, delivered, return).
-    """
-    events = [e.model_dump(mode="json") for e in bus.trail(mandate_ref)]
-    return notify.notifications(events)
-
-
-def _web_base() -> str:
-    return os.environ.get("OPAYAI_WEB_BASE", "http://localhost:8000")
-
-
-def _event_log_path() -> str:
-    return os.environ.get("OPAYAI_EVENT_LOG", os.path.expanduser("~/.opayai/events.jsonl"))
-
-
-def _install_event_logging() -> None:
-    """Mirror every event to a tail-able JSONL file and to stderr (host log panel).
-
-    Wired only when serving (run), so tests and in-process use stay side-effect free.
-    """
-    path = _event_log_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-
-    def _sink(event) -> None:
+    @mcp.tool()
+    def propose_cart(intent_id: str, offer_id: str, qty: int = 1) -> dict:
+        """Propose an exact cart; never sign it or pay for it."""
         try:
-            with open(path, "a") as f:
-                f.write(json.dumps(event.model_dump(mode="json")) + "\n")
-        except OSError:
-            pass
-        print(f"[opayai] #{event.seq} {event.type} {event.actor} {event.payload}",
-              file=sys.stderr, flush=True)
+            purchase = service.request_purchase(
+                intent_id, offer_id, qty, agent_id="mcp", client_info="MCP client")
+            return {
+                "purchase_id": purchase.id,
+                "status": "awaiting_human_authorization",
+                "proposal": purchase.proposal,
+                "next_action": "Present the exact cart and wait for the human signature.",
+            }
+        except PolicyBlock as error:
+            return _policy_error(error)
 
-    bus.subscribe(_sink)
+    @mcp.tool()
+    def evaluate_policy(purchase_id: str) -> dict:
+        """Read the deterministic policy result already recorded for a proposal."""
+        purchase = service.store.purchases[purchase_id]
+        events = service.ledger.for_purchase(purchase_id)
+        checks = [event.model_dump(mode="json") for event in events
+                  if event.actor == "policy"]
+        blocked = next((event for event in reversed(checks)
+                        if event["type"] == "policy_block"), None)
+        return {
+            "purchase_id": purchase_id,
+            "result": "BLOCK" if blocked else "PASS",
+            "checks": checks,
+            "human_authorization_required": purchase.cart is None or purchase.cart.signing is None,
+        }
+
+    @mcp.tool()
+    def get_order(purchase_id: str, since: int = 0) -> dict:
+        """Track order state, lifecycle events, and any pending exception."""
+        purchase = service.store.purchases[purchase_id]
+        events = service.ledger.for_purchase(purchase_id)
+        return {
+            "purchase_id": purchase.id,
+            "stage": purchase.status,
+            "order_status": purchase.order_status,
+            "order": purchase.order,
+            "events_since_last_call": [event.model_dump(mode="json") for event in events[since:]],
+            "pending_exception": purchase.exception.model_dump(mode="json")
+            if purchase.exception else None,
+            "status_url": f"{os.getenv('OPAYAI_WEB_BASE', 'http://localhost:8000')}/?purchase={purchase.id}",
+        }
+
+    @mcp.tool()
+    def create_return(purchase_id: str, reason: str) -> dict:
+        """Propose a return; a human must sign the exact resolution in OPayAI."""
+        try:
+            purchase = service.request_return(purchase_id, reason)
+            return {
+                "purchase_id": purchase.id,
+                "status": "awaiting_human_authorization",
+                "next_action": "Ask the human to review and sign the return resolution.",
+            }
+        except PolicyBlock as error:
+            return _policy_error(error)
+
+    @mcp.tool()
+    def list_purchases() -> list[dict]:
+        """List purchases with their current lifecycle state."""
+        return [{"purchase_id": purchase.id, "stage": purchase.status,
+                 "order_status": purchase.order_status}
+                for purchase in service.store.purchases.values()]
+
+    @mcp.tool()
+    def get_audit_trail(purchase_id: str) -> dict:
+        """Return the hash-chained audit trail and its validation result."""
+        events = service.ledger.for_purchase(purchase_id)
+        return {
+            "purchase_id": purchase_id,
+            "hash_chain_valid": service.ledger.verify(),
+            "events": [event.model_dump(mode="json") for event in events],
+        }
+
+    @mcp.tool()
+    def get_notifications(purchase_id: str | None = None, since: int = 0) -> list[dict]:
+        """Return action-needed and progress notifications for proactive hosts."""
+        from opayai.notify import notifications
+
+        events = service.ledger.events
+        if purchase_id:
+            events = service.ledger.for_purchase(purchase_id)
+        return notifications([event.model_dump(mode="json") for event in events[since:]])
+
+    @mcp.tool()
+    def get_evidence_bundle(purchase_id: str) -> dict:
+        """Return signed contexts, payment attempts, diffs, and validated ledger evidence."""
+        return service.evidence(purchase_id).model_dump(mode="json")
+
+    return mcp
 
 
-def run() -> None:
-    _install_event_logging()
-    channels.install(bus)   # webhook = full event feed; desktop/email = action pings
-    app.run()
+def default_service() -> OPayAIService:
+    return OPayAIService(Path(os.getenv("OPAYAI_STATE", ".opayai")))
+
+
+def create_app() -> FastAPI:
+    """Create the unified web, REST, BLIK, SSE, and HTTP-MCP process."""
+    service = default_service()
+    mcp = create_mcp(service)
+    mcp_http_app = mcp.streamable_http_app()
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        from opayai import channels
+
+        print(f"OPayAI is ready at http://{lan_ip()}:8000")
+        channels.install(service.ledger)
+        async with mcp.session_manager.run():
+            yield
+
+    app = FastAPI(title="OPayAI", version="1.0.0", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.state.service = service
+
+    @app.exception_handler(PolicyBlock)
+    async def policy_block(_: Request, error: PolicyBlock):
+        return JSONResponse(
+            status_code=409,
+            content={"status": "blocked", "violated_clause": error.clause,
+                     "detail": error.detail},
+        )
+
+    app.include_router(api_router)
+    app.include_router(merchant_router)
+    app.router.routes.extend(mcp_http_app.routes)
+
+    @app.get("/pay/blik/{session_id}", response_class=HTMLResponse)
+    def blik_page(session_id: str):
+        session = service.rails["blik_lite"].sessions.get(session_id)
+        if not session:
+            raise HTTPException(404, "Unknown BLIK session")
+        amount = f"{session.amount // 100:,}".replace(",", " ") + f",{session.amount % 100:02d} zł"
+        return f'''<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OPayAI BLIK</title>
+        <style>body{{margin:0;background:#0d1110;color:#f5f5ed;font:16px ui-rounded,system-ui;display:grid;min-height:100vh;place-items:center}}main{{width:min(92vw,370px);background:#f5f5ed;color:#13231d;padding:28px;border-radius:26px;box-shadow:0 20px 70px #0008}}small{{color:#64736d;text-transform:uppercase;letter-spacing:.13em}}h1{{font-size:23px;margin:24px 0 8px}}strong{{font-size:32px}}button{{width:100%;border:0;border-radius:12px;padding:16px;margin-top:12px;font-weight:800;font-size:16px;background:#0aaa64;color:white}}button:last-child{{background:#e8ece7;color:#183027}}</style>
+        <main><small>OPayAI · demo store</small><h1>Confirm this BLIK payment?</h1><strong>{amount}</strong><p>You signed the mandate on your laptop. This screen only confirms the payment.</p><form method="post"><button name="decision" value="confirm">Confirm payment</button><button name="decision" value="reject">Decline</button></form></main></html>'''
+
+    @app.post("/pay/blik/{session_id}", response_class=HTMLResponse)
+    def blik_confirm(session_id: str, decision: str = Form(...)):
+        purchase = service.blik_decision(session_id, decision)
+        outcome = "Payment confirmed" if purchase.order_status == "paid" else "Payment declined"
+        return HTMLResponse(
+            "<meta name='viewport' content='width=device-width'>"
+            f"<body style='font-family:system-ui;padding:32px'><h2>{outcome}</h2>"
+            "<p>You can close this page and return to OPayAI.</p></body>")
+
+    web_dist = Path(__file__).resolve().parents[2] / "web" / "dist"
+    if web_dist.exists():
+        app.mount("/", StaticFiles(directory=web_dist, html=True), name="web")
+    return app
 
 
 if __name__ == "__main__":
-    run()
+    from opayai import channels
+
+    runtime_service = default_service()
+    channels.install(runtime_service.ledger)
+    create_mcp(runtime_service).run()
