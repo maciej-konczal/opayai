@@ -1,0 +1,17 @@
+/* Dense chat mode: keeps the Boski layout while allowing more of a thread on screen. */
+.chat{padding-top:8px;padding-bottom:94px}
+.bot-row{margin-right:36px;margin-bottom:10px}
+.user-row{margin-left:65px;margin-bottom:11px}
+.bubble{font-size:15px;line-height:1.27;letter-spacing:-.25px}
+.bubble p{margin-bottom:8px}
+.bot-bubble{padding:12px 15px;border-radius:23px 23px 23px 6px}
+.user-bubble{padding:11px 15px;border-radius:23px 23px 6px 23px}
+.options{gap:6px;margin-top:9px}
+.option{padding:7px;border-radius:13px}
+.device{width:49px;height:47px;border-radius:8px;transform:scale(.96);transform-origin:center}
+.option h3,.approval h3{font-size:11px}.option b{font-size:10px;margin-top:2px}.option small{font-size:8px}.option p,.approval p{font-size:8px}.option em{font-size:18px}
+.tiny{font-size:8px!important;margin-top:8px!important}
+.approval{padding:8px;margin:8px 0;border-radius:13px}.mini{width:44px;height:44px}.approval b{font-size:11px}.approval small{font-size:8px}
+.consent{margin-top:8px;padding:10px;border-radius:12px;font-size:10px}.consent b{font-size:11px}.consent button{padding:10px 11px;margin-top:4px}
+.tracking,.return-card{margin:8px 0;padding:10px;border-radius:12px}.demo-button{padding:10px}.actions{margin-top:8px}.actions button{padding:9px 4px}
+@media(max-width:600px){.chat{padding-left:22px;padding-right:22px}}

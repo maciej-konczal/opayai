@@ -1,7 +1,11 @@
 __pycache__/
+.DS_Store
 *.pyc
 .venv/
 .env
+frontend/.env.local
+frontend/node_modules/
+frontend/.vite/
 dist/
 *.egg-info/
 .superpowers/
