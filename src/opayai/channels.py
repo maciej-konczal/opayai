@@ -145,8 +145,9 @@ def install(bus) -> None:
                 webhook.deliver(payload)
             except Exception:
                 pass
-        if n is not None and n["needs_action"]:
-            print(f"[opayai] ACTION NEEDED: {n['title']} - {n['body']}", file=sys.stderr, flush=True)
+        if n is not None and n.get("push"):
+            tag = "ACTION NEEDED" if n["needs_action"] else "UPDATE"
+            print(f"[opayai] {tag}: {n['title']} - {n['body']}", file=sys.stderr, flush=True)
             deliver(n, pings)
 
     bus.subscribe(_sink)

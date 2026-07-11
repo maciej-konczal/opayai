@@ -28,6 +28,18 @@ def test_progress_updates_are_not_actions():
                              "payload": {"status": "SHIPPED"}})["needs_action"] is False
 
 
+def test_delivered_is_pushed_but_shipped_is_not():
+    delivered = notification_for({"type": "order.advanced", "payload": {"status": "DELIVERED"}})
+    shipped = notification_for({"type": "order.advanced", "payload": {"status": "SHIPPED"}})
+    assert delivered["push"] is True and delivered["needs_action"] is False
+    assert shipped["push"] is False
+
+
+def test_action_items_are_always_pushed():
+    n = notification_for({"type": "policy.evaluated", "payload": {"result": "ESCALATE"}})
+    assert n["needs_action"] is True and n["push"] is True
+
+
 def test_notifications_filters_by_mandate():
     events = [{"type": "payment.settled", "payload": {"amount": "1", "rail": "ap2"}, "mandate_ref": "im_1"},
               {"type": "order.advanced", "payload": {"status": "SHIPPED"}, "mandate_ref": "im_2"}]
