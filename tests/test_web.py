@@ -1,4 +1,5 @@
-from opayai.web import order_index, order_detail, render_index, render_order
+from opayai.web import (order_index, order_detail, render_index, render_order,
+                        render_profile)
 
 EVENTS = [
     {"seq": 1, "type": "intent.created", "actor": "user", "mandate_ref": "im_1",
@@ -35,6 +36,14 @@ def test_order_detail_summarizes_and_keeps_full_trail():
 
 def test_order_detail_missing_returns_none():
     assert order_detail(EVENTS, "ord_999") is None
+
+
+def test_profile_shows_persona_context():
+    out = render_profile(EVENTS)
+    assert "Alex Rivera" in out                      # who Boski thinks you are
+    assert "Visa ****4242" in out                    # a configured payment method
+    assert "MacBook" in out                          # remembered from conversations
+    assert "ord_1" in out                            # a recent (live) order
 
 
 def test_render_pages_include_status_and_escape():

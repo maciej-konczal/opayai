@@ -106,6 +106,11 @@ tail -F ./opayai-events.jsonl
 `execute_payment` / `get_order` return a `status_url` (e.g.
 `http://localhost:8000/order/ord_1`), so the agent hands the user a clickable link.
 
+**Your context / profile:** http://localhost:8000/profile shows what the agent
+knows about you before it shops - preferences, default budget, passkey threshold,
+payment methods, remembered conversation, and recent orders. A natural demo start:
+open the profile, then give the agent a product prompt.
+
 ## 6. The full end-to-end demo (all together)
 
 Three panes make the strongest story:
