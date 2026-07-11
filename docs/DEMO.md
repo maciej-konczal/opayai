@@ -56,7 +56,8 @@ and the pinned config). Cursor spawns the MCP server; do not run it by hand.
    > Buy me a MacBook monitor under $300 that works with my MacBook and has free returns.
 3. Agent tries to pay -> tells you **"I can't authorize this - approve at
    http://localhost:8000/authorize"** (a macOS banner also pops).
-4. **Open /authorize**, click **Authorize with passkey**.
+4. **Open /authorize**, click **Authorize with passkey** - a real **Touch ID / passkey
+   prompt** appears (WebAuthn). Complete it.
 5. Agent completes -> **PAID**, hands you the tracking link. Open it.
 6. **~12s later** -> "delivered": a desktop push, and the order page updates live.
 
