@@ -118,7 +118,8 @@ def execute_payment(cart_id: str) -> dict:
     Only succeeds when the policy decision is AUTO_APPROVE, or an ESCALATE that
     has a recorded approval. Refuses REJECTs, unapproved escalations, and a repeat
     payment of the same cart (idempotency guard). Returns the created order
-    (status PAID) with its receipt.
+    (status PAID) with its receipt and a `status_url` the user can click to view
+    live order status - surface that link to the user.
     """
     cart = SESSION["carts"][cart_id]
     if cart_id in SESSION["paid"]:
@@ -134,7 +135,9 @@ def execute_payment(cart_id: str) -> dict:
     order = order_store.create(cart, receipt)
     SESSION["paid"][cart_id] = order.id
     SESSION["period_spent"] += cart.total.amount
-    return order.model_dump(mode="json")
+    d = order.model_dump(mode="json")
+    d["status_url"] = f"{_web_base()}/order/{order.id}"
+    return d
 
 
 @app.tool()
@@ -149,8 +152,13 @@ def advance_order(order_id: str) -> dict:
 
 @app.tool()
 def get_order(order_id: str) -> dict:
-    """Fetch the current status and event timeline of an order by id."""
-    return order_store.get(order_id).model_dump(mode="json")
+    """Fetch the current status and event timeline of an order by id.
+
+    Includes `status_url`, a link the user can open to see live order status.
+    """
+    d = order_store.get(order_id).model_dump(mode="json")
+    d["status_url"] = f"{_web_base()}/order/{order_id}"
+    return d
 
 
 @app.tool()
@@ -179,6 +187,10 @@ def get_audit_trail(mandate_ref: str | None = None) -> list[dict]:
     events.
     """
     return [e.model_dump(mode="json") for e in bus.trail(mandate_ref)]
+
+
+def _web_base() -> str:
+    return os.environ.get("OPAYAI_WEB_BASE", "http://localhost:8000")
 
 
 def _event_log_path() -> str:
