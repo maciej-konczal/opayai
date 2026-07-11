@@ -11,7 +11,7 @@ from opayai.mandate import create_intent_mandate as _create_intent, propose_cart
 from opayai.policy import evaluate_policy as _evaluate
 from opayai.orders import store as order_store
 from opayai.events import bus
-from opayai import stepup
+from opayai import stepup, recommend
 
 app = FastMCP("opayai-mcp")
 
@@ -69,6 +69,24 @@ def create_intent_mandate(user_id: str, category: str, max_total: str,
                       step_up_threshold=threshold))
     SESSION["intents"][im.id] = im
     return im.model_dump(mode="json")
+
+
+@app.tool()
+def suggest_offers(intent_id: str, limit: int = 3) -> list[dict]:
+    """Return a ranked shortlist of candidate offers for an intent, with reasons.
+
+    Each item has qualifies (bool) and match_reason (why it fits, or why not -
+    over budget / out of stock / missing free returns / not compatible). Present
+    this list to the user and let them pick which offer_id to buy BEFORE calling
+    propose_cart. This does not purchase anything. Searches the whole category
+    (including over-budget/out-of-stock options) so the user sees the tradeoffs.
+    """
+    intent = SESSION["intents"][intent_id]
+    offers = data.search_offers(category=intent.constraint.category)
+    for o in offers:
+        SESSION["offers"][o.id] = o
+    return recommend.suggest([o.model_dump(mode="json") for o in offers],
+                             intent.constraint, limit)
 
 
 @app.tool()

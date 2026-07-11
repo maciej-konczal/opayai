@@ -46,6 +46,23 @@ def test_escalation_blocks_until_approval():
     assert order["status"] == "PAID"
 
 
+def test_suggest_offers_shortlist_then_buy_the_choice():
+    intent = server.create_intent_mandate(
+        user_id="u_1", category="monitor", max_total="300",
+        hard_requirements=["free_returns", "compat:macbook"],
+        per_transaction="400", per_period="1000")
+    shortlist = server.suggest_offers(intent_id=intent["id"], limit=3)
+    # top suggestion qualifies; at least one is disqualified with a reason
+    assert shortlist[0]["qualifies"] is True
+    assert any(not s["qualifies"] and s["match_reason"] for s in shortlist)
+    # the user picks the top one -> the rest of the flow works on that offer
+    chosen = shortlist[0]["offer_id"]
+    cart = server.propose_cart(intent_id=intent["id"], offer_ids=[chosen],
+                               rail="x402", rationale="user picked")
+    assert server.evaluate_policy(cart_id=cart["id"])["result"] == "AUTO_APPROVE"
+    assert server.execute_payment(cart_id=cart["id"])["status"] == "PAID"
+
+
 def _pay_a_monitor(per_period="1000"):
     intent = server.create_intent_mandate(
         user_id="u_1", category="monitor", max_total="300",

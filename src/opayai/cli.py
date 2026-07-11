@@ -1,11 +1,10 @@
 from __future__ import annotations
 import os
-from decimal import Decimal
 from typing import Callable
 import typer
 from rich.console import Console
 from rich.markup import escape
-from opayai import server
+from opayai import server, recommend
 from opayai.data import load_persona
 from opayai.events import bus
 from opayai.front_door import parse_prompt
@@ -15,18 +14,9 @@ console = Console()
 
 
 def auto_pick(offers: list[dict], constraint: Constraint) -> list[str]:
-    reqs = constraint.hard_requirements
-    def ok(o: dict) -> bool:
-        if "free_returns" in reqs and not o["free_returns"]:
-            return False
-        for r in reqs:
-            if r.startswith("compat:") and r.split(":", 1)[1] not in o["specs"].get("compat", []):
-                return False
-            if r.startswith("arrives_by:") and o["delivery_est_date"] > r.split(":", 1)[1]:
-                return False
-        return o["stock_available"] and Decimal(o["price"]["amount"]) <= constraint.max_total.amount
-    ranked = sorted((o for o in offers if ok(o)), key=lambda o: -o["rating"])
-    return [ranked[0]["id"]] if ranked else []
+    ranked = recommend.suggest(offers, constraint, limit=len(offers) or 1)
+    winners = [s["offer_id"] for s in ranked if s["qualifies"]]
+    return winners[:1]
 
 
 def _render(event) -> None:

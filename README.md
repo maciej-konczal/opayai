@@ -75,7 +75,7 @@ Run it as a server any MCP host can drive:
 
 1. Open this folder as the Cursor workspace - Cursor auto-detects `.cursor/mcp.json`.
 2. Settings → MCP → toggle the **`opayai`** server on (or off/on to reload tools).
-   You should see 12 tools.
+   You should see 13 tools.
 3. In Agent chat, a plain prompt drives the whole flow (the tools describe
    themselves, so you do NOT need to spell out each call):
 
@@ -132,6 +132,7 @@ in pane 1 update live as you tell the agent to advance or return the order.
 |---|---|
 | `create_intent_mandate` | sign what the user authorizes (constraints, limits, `step_up_threshold`) - call FIRST |
 | `search_offers` | agent-readable catalog (price, stock, delivery, returns, specs) |
+| `suggest_offers` | ranked shortlist with match reasons (and why-not); user picks before `propose_cart` |
 | `propose_cart` | sign the specific cart the agent wants to buy |
 | `evaluate_policy` | AUTO_APPROVE / ESCALATE / REJECT + `step_up_required`, with a per-rule breakdown |
 | `request_approval` | record a yes/no for an escalated (over-limit) cart |
@@ -183,7 +184,7 @@ src/opayai/
   stepup.py      human-present passkey ceremony
   rails.py       PaymentRail interface + MockX402Rail + MockCardRail
   orders.py      order lifecycle state machine (+ cancel/return)
-  server.py      the opayai-mcp server (12 tools)
+  server.py      the opayai-mcp server (13 tools)
   front_door.py  prompt -> Intent Mandate (Claude or offline heuristic)
   cli.py         CLI host + live renderer + demo
   web.py         read-only status site
