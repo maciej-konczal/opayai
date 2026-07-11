@@ -50,3 +50,23 @@ def test_desktop_enabled_by_default(monkeypatch):
     monkeypatch.delenv("OPAYAI_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("RESEND_API_KEY", raising=False)
     assert [c.name for c in channels.enabled_channels()] == ["desktop"]
+
+
+def test_email_escapes_html_and_sets_idempotency(monkeypatch):
+    captured = {}
+
+    def fake_post(url, payload, headers=None, timeout=6):
+        captured["payload"] = payload
+        captured["headers"] = headers or {}
+        return 200
+
+    monkeypatch.setattr(channels, "_post_json", fake_post)
+    ch = channels.EmailChannel(api_key="re_x", to="me@example.com",
+                               sender="opayai <onboarding@resend.dev>",
+                               link="http://localhost:8000")
+    ch.deliver({"title": "Approve <script>alert(1)</script>", "body": "buy <b>now</b>",
+                "source_event": "policy.evaluated", "mandate_ref": "im_1", "seq": 3})
+    body_html = captured["payload"]["html"]
+    assert "<script>" not in body_html and "&lt;script&gt;" in body_html
+    assert "<b>now</b>" not in body_html and "&lt;b&gt;now" in body_html
+    assert captured["headers"].get("Idempotency-Key") == "opayai-policy.evaluated/im_1-3"

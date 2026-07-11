@@ -14,6 +14,7 @@ Enable via env:
   OPAYAI_WEB_BASE=...        link included in the email (default http://localhost:8000)
 """
 from __future__ import annotations
+import html
 import json
 import os
 import platform
@@ -69,14 +70,19 @@ class EmailChannel:
         self.link = link
 
     def deliver(self, n: dict) -> None:
-        html = (f'<p><b>{n["title"]}</b></p><p>{n["body"]}</p>'
-                f'<p><a href="{self.link}">Open opayai to act</a></p>')
+        # escape every interpolated field - notifications may carry dynamic data
+        # (product titles, LLM rationale) that must not become active HTML.
+        title = html.escape(str(n.get("title", "")))
+        body = html.escape(str(n.get("body", "")))
+        link = html.escape(str(self.link), quote=True)
+        msg = (f'<p><b>{title}</b></p><p>{body}</p>'
+               f'<p><a href="{link}">Open opayai to act</a></p>')
         # idempotency: same event never emails twice on a retry (Resend, 24h window)
         key = f'opayai-{n.get("source_event", "evt")}/{n.get("mandate_ref", "-")}-{n.get("seq", "")}'[:256]
         _post_json(
             "https://api.resend.com/emails",
             {"from": self.sender, "to": [self.to],
-             "subject": f'opayai: {n["title"]}', "html": html},
+             "subject": f'opayai: {n.get("title", "")}', "html": msg},
             headers={"Authorization": f"Bearer {self.api_key}", "Idempotency-Key": key})
 
 
