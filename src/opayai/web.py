@@ -276,19 +276,24 @@ _PASSKEY_JS = """<script>
 async function passkey(ev, form){
   ev.preventDefault();
   var msg=document.getElementById('pk-msg');
-  if(!window.PublicKeyCredential){ form.submit(); return false; }
+  if(!window.PublicKeyCredential){
+    if(msg) msg.textContent='WebAuthn not available here - submitting without a gesture.';
+    form.submit(); return false;
+  }
+  if(msg) msg.textContent='Waiting for your passkey / Touch ID...';
   try{
     await navigator.credentials.create({publicKey:{
       challenge: crypto.getRandomValues(new Uint8Array(32)),
       rp:{name:'opayai'},
       user:{id: crypto.getRandomValues(new Uint8Array(16)), name:'you@opayai', displayName:'opayai user'},
       pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
-      authenticatorSelection:{userVerification:'required'}, timeout:60000
+      authenticatorSelection:{authenticatorAttachment:'platform', userVerification:'required'},
+      attestation:'none', timeout:60000
     }});
     if(msg) msg.textContent='Passkey verified - authorizing...';
     form.submit();
   }catch(e){
-    if(msg) msg.textContent='Passkey cancelled or unavailable - not authorized.';
+    if(msg) msg.textContent='Passkey failed ('+((e&&e.name)||e)+'). Click again to retry.';
   }
   return false;
 }
