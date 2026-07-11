@@ -55,8 +55,9 @@ class _InnerSpy:
 
     async def __call__(self, scope, receive, send) -> None:
         self.called = True
-        await send({"type": "http.response.start", "status": 200, "headers": []})
-        await send({"type": "http.response.body", "body": b"ok"})
+        if scope["type"] == "http":
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
 
 
 def _drive(app, scope) -> list[dict]:
@@ -202,12 +203,19 @@ Adds the `OPAYAI_TRANSPORT` branch to `run()` so the server can actually serve H
 
 - [ ] **Step 1: Append a voice line to `_INSTRUCTIONS`**
 
-In `src/opayai/server.py`, the `_INSTRUCTIONS` string currently ends with the item that starts `4. Tell the user about any action-needed step ...` and ends `... so they can track the order.` Add a 5th item just before the closing `"""`:
+In `src/opayai/server.py`, the `_INSTRUCTIONS` string currently ends with item 5
+(`5. Do NOT call advance_order ...`) whose last line is `in the background, and the
+user is notified proactively. Just hand over the status_url."""`. Add a 6th item.
+Change that closing line so the string does NOT terminate, then append the new item.
+The final lines of `_INSTRUCTIONS` must read exactly:
 
 ```python
-5. VOICE: if you are speaking, say the choose / approve / passkey moment out loud
-   ("this needs your approval" / "this needs a passkey - shall I proceed?"), wait
-   for a yes, then call the matching tool. Keep spoken replies short.
+5. Do NOT call advance_order - fulfillment (shipped, then delivered) happens on its own
+   in the background, and the user is notified proactively. Just hand over the status_url.
+6. VOICE: if you are speaking, say the choose and authorize moments out loud - present
+   the ranked options and wait for the user to pick, and when execute_payment returns a
+   PENDING status tell them out loud that it needs their approval/passkey and to authorize
+   at the returned authorize_url, then call execute_payment again. Keep spoken replies short."""
 ```
 
 - [ ] **Step 2: Replace `run()` with the transport-aware version**
@@ -218,15 +226,17 @@ In `src/opayai/server.py`, replace the existing:
 def run() -> None:
     _install_event_logging()
     channels.install(bus)   # webhook = full event feed; desktop/email = action pings
+    fulfillment.start()     # orders ship/deliver on a timer -> proactive notifications
     app.run()
 ```
 
-with:
+with (keep all three setup lines, including `fulfillment.start()`, unchanged):
 
 ```python
 def run() -> None:
     _install_event_logging()
     channels.install(bus)   # webhook = full event feed; desktop/email = action pings
+    fulfillment.start()     # orders ship/deliver on a timer -> proactive notifications
     if os.environ.get("OPAYAI_TRANSPORT", "stdio") == "http":
         import uvicorn
         host = "0.0.0.0"
@@ -297,25 +307,27 @@ git commit -m "feat(server): OPAYAI_TRANSPORT=http serve-mode over streamable-ht
 
 ---
 
-### Task 3: Docs - README Quickstart C (ElevenLabs voice agent)
+### Task 3: Docs - README Quickstart D (ElevenLabs voice agent) + env vars
 
-Documents the end-to-end demo path so anyone can reproduce it: start the HTTP server, open a cloudflared tunnel, register the URL in ElevenLabs, and talk. Docs-only; no code, no test cycle beyond a render check.
+Documents the end-to-end demo path so anyone can reproduce it: start the HTTP server, open a cloudflared tunnel, register the URL in ElevenLabs, and talk. Also adds the three new env vars to the existing Environment-variables table. Docs-only; no code, no test cycle beyond a render check.
+
+NOTE (branch drift): the README has been edited in parallel. "Quickstart C" is ALREADY used for the web status site, and the Quickstart numbering runs 3 (CLI), 4 (Cursor), 5 (web status site), 6 (full demo). So the new section is **"## 7. Quickstart D - the ElevenLabs voice agent"**, inserted AFTER section 6 and BEFORE the `---` that precedes "## MCP tools". Re-read the README around those anchors before editing - if the numbering has shifted again, pick the next free integer and a free Quickstart letter, and keep it as the last quickstart before "## MCP tools".
 
 **Files:**
-- Modify: `README.md` (add a new section after the existing "Quickstart B - the MCP server + Cursor" section)
+- Modify: `README.md` (new Quickstart section after section 6 "The full end-to-end demo"; three new rows in the "## Environment variables" table)
 
 **Interfaces:**
 - Consumes: the env vars and endpoint established in Tasks 1-2 (`OPAYAI_TRANSPORT`, `OPAYAI_MCP_PORT`, `OPAYAI_MCP_TOKEN`, path `/mcp`).
 - Produces: nothing consumed by later tasks (final task).
 
-- [ ] **Step 1: Add the Quickstart C section**
+- [ ] **Step 1: Add the Quickstart D section**
 
-In `README.md`, immediately after the end of the "Quickstart B - the MCP server + Cursor" section (before the next top-level section), insert:
+In `README.md`, immediately after the end of section 6 "The full end-to-end demo (all together)" and BEFORE the `---` line that precedes "## MCP tools", insert:
 
 ````markdown
-## 5. Quickstart C - the ElevenLabs voice agent
+## 7. Quickstart D - the ElevenLabs voice agent
 
-Drive the same 13 tools by voice from an ElevenLabs Conversational-AI agent. The
+Drive the same MCP tools by voice from an ElevenLabs Conversational-AI agent. The
 agent platform speaks to MCP servers over Streamable HTTP at a public URL, so we
 run the server in HTTP mode and expose it with a temporary `cloudflared` tunnel.
 
@@ -332,8 +344,8 @@ OPAYAI_EVENT_LOG="$PWD/opayai-events.jsonl" \
 
 The MCP endpoint is now `http://0.0.0.0:8787/mcp`. `OPAYAI_MCP_TOKEN` is optional
 - if set, callers must send `Authorization: Bearer <token>`. Leave it unset to
-run open (the tunnel URL is unguessable). This runs on port 8787 so it does not
-collide with the web status site on 8000.
+run open (the tunnel URL is unguessable). It runs on port 8787 so it does not
+collide with the web status site on 8000 - run both together for the full picture.
 
 ### b. Expose it with a tunnel
 
@@ -356,31 +368,43 @@ In the ElevenLabs dashboard: your agent -> Tools -> add a custom MCP server:
 | Secret Token | the same value you used for `OPAYAI_MCP_TOKEN` (omit if unset) |
 | Approval policy | No Approval |
 
-Use **No Approval** so ElevenLabs does not double-prompt: opayai has its own
-human-in-the-loop gates (`request_approval` and `authorize_step_up`), and the
-agent voices them out loud.
+Use **No Approval** so ElevenLabs does not double-prompt. opayai keeps its own
+human-in-the-loop gate: when a cart needs approval or a passkey, `execute_payment`
+returns a PENDING status with an `authorize_url` on the web trusted surface. The
+voice agent reads that moment out loud and asks the user to authorize at the link,
+then calls `execute_payment` again to finish - the agent can never self-authorize.
 
 ### d. Talk to it
 
 Say something like "buy me a good monitor under $300". The agent runs
-discover -> decide -> approve -> purchase -> track using the tools, speaking the
-choose / approve / passkey moments aloud. Watch the same live event feed and
-status site as the CLI/Cursor demos - the tunnel URL is ephemeral, so re-register
-it in ElevenLabs whenever you restart the tunnel.
+discover -> decide -> approve -> purchase -> track, speaking the choose and
+authorize moments aloud. Watch the same live event feed, status site, and
+`/profile` page as the CLI/Cursor demos. The tunnel URL is ephemeral, so
+re-register it in ElevenLabs whenever you restart the tunnel.
 ````
 
-Note: if the existing Cursor section is not numbered "4", renumber this heading to follow it (it must be the next section after Quickstart B).
+- [ ] **Step 2: Add the three env vars to the Environment-variables table**
 
-- [ ] **Step 2: Render check**
+In `README.md`, in the "## Environment variables" table (the one whose header is
+`| var | default | used by |`), add these three rows. Put them right after the
+`OPAYAI_WEB_BASE` row so the server-transport vars sit together:
 
-Run: `./.venv/bin/python -c "import pathlib,sys; t=pathlib.Path('README.md').read_text(); sys.exit(0 if 'Quickstart C - the ElevenLabs voice agent' in t and t.count('```')%2==0 else 1)"; echo $?`
-Expected: `0` (section present and all code fences balanced).
+```markdown
+| `OPAYAI_TRANSPORT` | `stdio` | server: `http` serves Streamable HTTP (for ElevenLabs); `stdio` for Cursor/hosts |
+| `OPAYAI_MCP_PORT` | `8787` | server (http transport): port for the `/mcp` endpoint |
+| `OPAYAI_MCP_TOKEN` | unset | server (http transport): require `Authorization: Bearer <token>` when set |
+```
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Render check**
+
+Run: `./.venv/bin/python -c "import pathlib,sys; t=pathlib.Path('README.md').read_text(); ok = 'Quickstart D - the ElevenLabs voice agent' in t and 'OPAYAI_TRANSPORT' in t and t.count(chr(96)*3)%2==0; sys.exit(0 if ok else 1)"; echo $?`
+Expected: `0` (section present, env var documented, all code fences balanced).
+
+- [ ] **Step 4: Commit**
 
 ```bash
 git add README.md
-git commit -m "docs(readme): Quickstart C - ElevenLabs voice agent over streamable-http tunnel"
+git commit -m "docs(readme): Quickstart D - ElevenLabs voice agent over streamable-http tunnel"
 ```
 
 ---
