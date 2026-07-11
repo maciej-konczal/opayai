@@ -11,7 +11,7 @@ from opayai.mandate import create_intent_mandate as _create_intent, propose_cart
 from opayai.policy import evaluate_policy as _evaluate
 from opayai.orders import store as order_store
 from opayai.events import bus
-from opayai import stepup, recommend, notify
+from opayai import stepup, recommend, notify, channels
 
 app = FastMCP("opayai-mcp")
 
@@ -280,31 +280,19 @@ def _install_event_logging() -> None:
 
 
 def _install_notifications() -> None:
-    """Fire a native desktop ping when a notification needs the user's action.
+    """Deliver a proactive ping to every enabled channel when action is needed.
 
-    The proactive "pings you only when it needs input, approval, or a decision"
-    behavior. macOS only; opt out with OPAYAI_NOTIFY=0. Never fatal.
+    The "pings you only when it needs input, approval, or a decision" behavior.
+    Channels (desktop / webhook / email) are env-driven; see opayai.channels.
     """
-    import platform
-    import subprocess
-    enabled = os.environ.get("OPAYAI_NOTIFY", "1") != "0" and platform.system() == "Darwin"
+    active = channels.enabled_channels()
 
     def _sink(event) -> None:
         n = notify.notification_for(event.model_dump(mode="json"))
         if not n or not n["needs_action"]:
             return
         print(f"[opayai] ACTION NEEDED: {n['title']} - {n['body']}", file=sys.stderr, flush=True)
-        if not enabled:
-            return
-        title = n["title"].replace('"', "'")
-        body = n["body"].replace('"', "'")
-        try:
-            subprocess.run(
-                ["osascript", "-e",
-                 f'display notification "{body}" with title "opayai: {title}"'],
-                check=False, capture_output=True)
-        except Exception:
-            pass
+        channels.deliver(n, active)
 
     bus.subscribe(_sink)
 

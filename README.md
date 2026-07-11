@@ -176,6 +176,28 @@ in pane 1 update live as you tell the agent to advance or return the order.
 | `OPAYAI_WEB_BASE` | `http://localhost:8000` | server (builds `status_url`) |
 | `ANTHROPIC_API_KEY` | unset | CLI front door: real Claude parse when set, offline heuristic otherwise |
 | `OPAYAI_MODEL` | `claude-sonnet-5` | CLI front door model id |
+| `OPAYAI_NOTIFY` | `1` | desktop ping on action-needed (macOS); `0` to disable |
+| `OPAYAI_WEBHOOK_URL` | unset | POST each action-needed notification here (the Boski push seam) |
+| `RESEND_API_KEY` + `OPAYAI_NOTIFY_EMAIL` | unset | email an action-needed notification via Resend |
+| `OPAYAI_EMAIL_FROM` | `opayai <onboarding@resend.dev>` | email sender |
+
+### Proactive notifications (channels)
+
+The server generates user-facing notifications from the event stream and tags them
+`needs_action` (approve / passkey / choose) vs progress updates - the "pings you
+only when it needs input, approval, or a decision" behavior. Action-needed ones fan
+out to every enabled **channel** (`src/opayai/channels.py`):
+
+- **Desktop** - native macOS banner (on by default; `OPAYAI_NOTIFY=0` to mute).
+- **Webhook** - `OPAYAI_WEBHOOK_URL` gets a JSON POST per action-needed notification.
+  This is the integration seam a host like Boski uses to push to the user's phone.
+  Demo it against any listener (e.g. `webhook.site`).
+- **Email** - set `RESEND_API_KEY` + `OPAYAI_NOTIFY_EMAIL` to email the user. Note
+  the default `onboarding@resend.dev` sender is a Resend sandbox: it only delivers to
+  your own Resend account email until you verify a domain and set `OPAYAI_EMAIL_FROM`.
+
+The agent can also pull the feed with the `get_notifications` tool, and the web order
+page shows a Notifications inbox. Same notification, many channels.
 
 ## Project layout
 
