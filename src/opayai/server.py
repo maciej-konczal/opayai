@@ -13,7 +13,19 @@ from opayai.orders import store as order_store
 from opayai.events import bus
 from opayai import stepup, recommend, notify, channels
 
-app = FastMCP("opayai-mcp")
+_INSTRUCTIONS = """opayai is an agent-commerce backbone. Default flow:
+1. Call create_intent_mandate FIRST (constraints, spending limits, optional step_up_threshold).
+2. When the user is shopping, call suggest_offers and PRESENT the ranked options
+   (with their match_reason) to the user, then WAIT for them to choose. Do NOT call
+   propose_cart or execute_payment until the user picks - UNLESS the user explicitly
+   says to buy autonomously (e.g. "just buy it", "complete the purchase", "pick the best").
+3. Always run evaluate_policy before execute_payment. If it returns step_up_required,
+   call authorize_step_up (passkey). If the result is ESCALATE, ask the user, then
+   request_approval. Never call execute_payment while a gate is unmet.
+4. Tell the user about any action-needed step (choose / approve / passkey) and surface
+   the status_url returned by execute_payment/get_order so they can track the order."""
+
+app = FastMCP("opayai-mcp", instructions=_INSTRUCTIONS)
 
 SESSION: dict = {}
 
