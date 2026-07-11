@@ -1,7 +1,7 @@
 """Super simple read-only status site for opayai orders.
 
 Reads the append-only event log the MCP server writes (OPAYAI_EVENT_LOG) and
-renders order status + the signed audit trail as HTML. Separate process from the
+renders order status + the audit event trail as HTML. Separate process from the
 MCP server; they share state through the log file, so the page reflects whatever
 the agent has done. Zero third-party dependencies (stdlib http.server).
 
@@ -177,7 +177,7 @@ def render_order(events: list[dict], order_id: str) -> str:
             f'<span class=type>{html.escape(e.get("type",""))}</span>'
             f'<span class=actor>{html.escape(e.get("actor",""))}</span>'
             f'<span class=pl>{html.escape(json.dumps(e.get("payload",{})))}</span></div>')
-    body = (summary_html + notes_html + "<h2>Signed audit trail</h2>"
+    body = (summary_html + notes_html + "<h2>Audit event trail</h2>"
             + "".join(evs) + '<p><a href="/">All orders</a></p>')
     return _page(f"Order {order_id}", body)
 

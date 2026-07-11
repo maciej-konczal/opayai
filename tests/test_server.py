@@ -1,4 +1,5 @@
 from opayai import server
+from concurrent.futures import ThreadPoolExecutor
 
 
 def setup_function():
@@ -88,6 +89,21 @@ def test_double_payment_is_refused():
         assert True
 
 
+def test_concurrent_payment_only_charges_once_in_process():
+    _intent, cart = _pay_a_monitor()
+
+    def pay():
+        try:
+            return server.execute_payment(cart_id=cart["id"])["status"]
+        except ValueError as exc:
+            return str(exc)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(lambda _n: pay(), range(2)))
+    assert outcomes.count("PAID") == 1
+    assert sum("already paid" in outcome for outcome in outcomes) == 1
+
+
 def test_audit_trail_includes_order_lifecycle():
     intent, cart = _pay_a_monitor()
     order = server.execute_payment(cart_id=cart["id"])
@@ -120,3 +136,43 @@ def test_step_up_blocks_payment_until_passkey():
     assert order["status"] == "PAID"
     types = [e["type"] for e in server.get_audit_trail(mandate_ref=intent["id"])]
     assert "stepup.authorized" in types
+
+
+def test_declined_approval_revokes_previous_approval():
+    _intent, cart = _pay_a_monitor(per_period="200")
+    server.request_approval(cart_id=cart["id"], approved=True)
+    server.request_approval(cart_id=cart["id"], approved=False)
+    try:
+        server.execute_payment(cart_id=cart["id"])
+        assert False
+    except ValueError as exc:
+        assert "valid user approval" in str(exc)
+
+
+def test_approval_rejected_for_auto_approved_cart():
+    _intent, cart = _pay_a_monitor()
+    try:
+        server.request_approval(cart_id=cart["id"], approved=True)
+        assert False
+    except ValueError as exc:
+        assert "only valid for an escalated" in str(exc)
+
+
+def test_payment_rechecks_stock_after_policy_decision():
+    _intent, cart = _pay_a_monitor()
+    offer_id = cart["items"][0]["offer_id"]
+    server.SESSION["offers"][offer_id].stock_available = False
+    server.SESSION["offers"][offer_id].stock_qty = 0
+    try:
+        server.execute_payment(cart_id=cart["id"])
+        assert False
+    except ValueError as exc:
+        assert "policy rejected" in str(exc)
+
+
+def test_order_captures_authoritative_return_window():
+    _intent, cart = _pay_a_monitor()
+    offer_id = cart["items"][0]["offer_id"]
+    expected = server.SESSION["offers"][offer_id].returns_window_days
+    order = server.execute_payment(cart_id=cart["id"])
+    assert order["returns_window_days"] == expected

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from opayai.types import (Constraint, Money, SpendingLimit, Offer)
 from opayai.mandate import create_intent_mandate, propose_cart, reset_ids
@@ -97,3 +97,43 @@ def test_no_step_up_under_threshold():
     cart = propose_cart(im, offers, "ap2", "fits", now=datetime(2026, 7, 11, 9, 1))
     dec = evaluate_policy(im, cart, {o.id: o for o in offers})
     assert dec.step_up_required is False
+
+
+def test_rejects_expired_intent():
+    im = _intent()
+    offers = [_offer()]
+    cart = propose_cart(im, offers, "ap2", "fits", now=datetime(2026, 7, 11, 9, 1))
+    dec = evaluate_policy(im, cart, {o.id: o for o in offers},
+                          now=datetime(2026, 7, 13, tzinfo=timezone.utc))
+    assert dec.result == "REJECT"
+    assert any(c.rule == "intent_expiry" and not c.passed for c in dec.checks)
+
+
+def test_rejects_out_of_stock_offer():
+    im = _intent()
+    offer = _offer()
+    offer.stock_available = False
+    offer.stock_qty = 0
+    cart = propose_cart(im, [offer], "ap2", "fits", now=datetime(2026, 7, 11, 9, 1))
+    dec = evaluate_policy(im, cart, {offer.id: offer})
+    assert dec.result == "REJECT"
+    assert any(c.rule == "stock" and not c.passed for c in dec.checks)
+
+
+def test_rejects_empty_cart_and_unsupported_rail():
+    im = _intent(reqs=())
+    cart = propose_cart(im, [], "wire", "nothing", now=datetime(2026, 7, 11, 9, 1))
+    dec = evaluate_policy(im, cart, {})
+    assert dec.result == "REJECT"
+    failed = {c.rule for c in dec.checks if not c.passed}
+    assert {"cart_nonempty", "payment_rail"} <= failed
+
+
+def test_rejects_currency_mismatch():
+    im = _intent(reqs=())
+    offer = _offer()
+    offer.price.currency = "EUR"
+    cart = propose_cart(im, [offer], "ap2", "fits", now=datetime(2026, 7, 11, 9, 1))
+    dec = evaluate_policy(im, cart, {offer.id: offer})
+    assert dec.result == "REJECT"
+    assert any(c.rule == "currency" and not c.passed for c in dec.checks)

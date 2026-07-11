@@ -1,9 +1,9 @@
-"""Human-present step-up authorization (AP2 human-present, passkey-style).
+"""Simulated trusted-surface step-up authorization (passkey-style).
 
 For carts at or above the intent's step_up_threshold, the pre-signed Intent
 Mandate is not enough - the user must authorize this specific purchase with a
 fresh, challenge-bound signature from their registered device credential
-(passkey). We simulate both the device (signs the challenge) and the relying
+(passkey). In the offline demo we simulate both the device (signs the challenge) and the relying
 party (verifies against the registered device public key). The signature is bound
 to the cart id and amount, so it cannot be replayed for a different purchase.
 """
