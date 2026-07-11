@@ -4,6 +4,7 @@
       "command": "/Users/maciejkonczal/Documents/Projects/opayai/.venv/bin/python",
       "args": ["-m", "opayai.server"],
       "env": {
+        "OPAYAI_WEBHOOK_URL": "http://127.0.0.1:9099",
         "OPAYAI_EVENT_LOG": "/Users/maciejkonczal/Documents/Projects/opayai/opayai-events.jsonl"
       }
     }

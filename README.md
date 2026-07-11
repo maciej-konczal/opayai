@@ -1,8 +1,8 @@
 # opayai-mcp
 
 Agent commerce backbone: turn a prompt into a **signed, policy-checked purchase**
-across pluggable payment rails, with an approval gate, human-present passkey
-step-up, and an audit trail. Ships as an **MCP server** (any assistant can plug
+across pluggable payment adapters, with an approval gate, a simulated trusted-
+surface/passkey step-up, and an audit event trail. Ships as an **MCP server** (any assistant can plug
 in), a **CLI demo**, and a **web status site**.
 
 The challenge is not recommendations - it is the transaction workflow for agents:
@@ -33,7 +33,7 @@ so you never need to activate it.)
 
 ```bash
 ./.venv/bin/pytest -q
-# 47 passed
+# 73 passed
 ```
 
 ## 3. Quickstart A - the CLI demo (fastest way to see it)
@@ -58,8 +58,8 @@ Reading the output:
 | `intent.created` | discover/decide | prompt → signed Intent Mandate (constraints + spending limits) |
 | `cart.proposed` | decide | agent picks an offer → signed Cart Mandate |
 | `policy.evaluated` | approve | signature + hard requirements + budget + spending limits + step-up |
-| `stepup.authorized` | approve | (only over threshold) passkey signs a fresh challenge |
-| `payment.settled` | purchase | selected rail charges → receipt |
+| `stepup.authorized` | approve | (only over threshold) the demo device signs a fresh challenge |
+| `payment.settled` | purchase | selected mock adapter succeeds → receipt |
 | `order.created/advanced` | track | PAID → SHIPPED → DELIVERED |
 | `order.return_requested` | resolve | `--return` files a return |
 
@@ -75,7 +75,7 @@ Run it as a server any MCP host can drive:
 
 1. Open this folder as the Cursor workspace - Cursor auto-detects `.cursor/mcp.json`.
 2. Settings → MCP → toggle the **`opayai`** server on (or off/on to reload tools).
-   You should see 13 tools.
+   You should see 14 tools.
 3. In Agent chat, a plain prompt drives the whole flow (the tools describe
    themselves, so you do NOT need to spell out each call):
 
@@ -92,7 +92,7 @@ generality point: one server, many hosts.
 ## 5. Quickstart C - the web status site + live logs
 
 The server writes every event to a log; the web site reads that same log and
-renders order status + the signed audit trail (auto-refreshing).
+renders order status + the audit event trail (auto-refreshing).
 
 ```bash
 # terminal 1: the status site (point it at the log the server writes)
@@ -147,23 +147,25 @@ in pane 1 update live as you tell the agent to advance or return the order.
 | `get_order` | current status + timeline (+ `status_url`) |
 | `cancel_order` | cancel before shipment |
 | `create_return` | return a delivered order within its window |
-| `get_audit_trail` | the full signed event trail for an intent (the receipt) |
+| `get_audit_trail` | the full audit event trail for an intent |
+| `get_notifications` | proactive action-needed and progress notifications |
 
 ## Key concepts
 
-- **Mandates (AP2-aligned).** The **Intent Mandate** is the user's pre-authorization
+- **Mandates (AP2-inspired).** The demo **Intent Mandate** is the user's pre-authorization
   (human-not-present): buy within these constraints and limits. The **Cart Mandate**
   is the specific proposed purchase. Both are Ed25519-signed.
 - **Policy engine (fail-closed).** Checks signature, hard requirements
   (`free_returns`, `compat:<tag>`, `arrives_by:YYYY-MM-DD`), budget, and spending
   limits. Unknown/typo'd requirements are REJECTED, not silently passed.
-- **Human-present step-up (passkey).** Carts at/above `step_up_threshold` require a
-  fresh, challenge-bound signature from the user's registered device credential
-  (passkey) - AP2's human-present path. Payment is refused until it verifies.
-- **Pluggable rails.** `ap2` (the headline - Google Agent Payments Protocol) and
-  `card` behind one `PaymentRail` interface. Adding another rail (real AP2/PSP,
-  x402, Stripe ACP) is a single class - this is the generality story.
-- **Audit trail = event bus = live view.** One append-only stream: the CLI renders
+- **Simulated trusted-surface step-up.** Carts at/above `step_up_threshold` require a
+  fresh, challenge-bound demo-device signature and a signed, expiring authorization
+  proof. Payment is refused until it verifies. Production would issue this proof
+  after a real WebAuthn user gesture on a separate trusted surface.
+- **Pluggable payment adapters.** Mock `ap2` and `card` adapters sit behind one
+  `PaymentRail` interface. Adding a real AP2/PSP, x402, or Stripe adapter is the
+  next integration step.
+- **Audit event trail = event bus = live view.** One append-only stream: the CLI renders
   it, the web site renders it, and `get_audit_trail` returns it as the receipt of
   exactly what the user agreed to and what happened.
 
@@ -230,14 +232,14 @@ src/opayai/
   events.py      append-only event bus (audit trail + live view)
   mandate.py     build + sign intent and cart mandates
   policy.py      the policy engine (fail-closed) + step-up requirement
-  stepup.py      human-present passkey ceremony
-  rails.py       PaymentRail interface + MockX402Rail + MockCardRail
+  stepup.py      simulated trusted-surface/passkey ceremony
+  rails.py       PaymentRail interface + MockAP2Rail + MockCardRail
   orders.py      order lifecycle state machine (+ cancel/return)
-  server.py      the opayai-mcp server (13 tools)
+  server.py      the opayai-mcp server (14 tools)
   front_door.py  prompt -> Intent Mandate (Claude or offline heuristic)
   cli.py         CLI host + live renderer + demo
   web.py         read-only status site
-tests/           42 tests
+tests/           73 tests
 docs/superpowers/  design spec + implementation plan
 ```
 
@@ -246,6 +248,7 @@ docs/superpowers/  design spec + implementation plan
 - The demo dataset dates work on 2026-07-11 (`arrives tomorrow` = 2026-07-12). If
   demoing later, compute "tomorrow" from the clock in `front_door.heuristic_parse`
   and the offer fixtures.
-- Payment is mocked (pluggable rails). The consent layer - mandates, policy,
-  step-up, audit - is fully real; that is where agent commerce is actually hard.
-```
+- Payment adapters and the trusted user surface are mocked. The deterministic
+  policy gates, signatures, expiring authorization proofs, and lifecycle state
+  machine are executable. This is AP2-inspired, not wire-compatible with the
+  official AP2 Checkout/Payment Mandate schemas yet.
