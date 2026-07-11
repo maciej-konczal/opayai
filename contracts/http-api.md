@@ -35,3 +35,7 @@ webapp human surface. It accepts a six-digit demo BLIK code, records the in-chat
 human payment interaction, and confirms the already cart-bound BLIK session.
 Agents do not receive this method through MCP. Desktop can still open or QR-link
 to `/pay/blik/{session_id}` as an out-of-band fallback.
+
+Demo fault injection accepts either a purchase ID (needed to pre-arm a declined
+BLIK before an order exists) or an order ID (used for wrong-item fulfillment):
+`POST /api/demo/fault/{purchase_or_order_id} {type}`.

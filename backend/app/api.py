@@ -200,9 +200,9 @@ def demo_advance(order_id: str, request: Request):
     return _service(request).advance(order_id).model_dump(mode="json")
 
 
-@router.post("/demo/fault/{order_id}")
-def demo_fault(order_id: str, body: FaultBody, request: Request):
-    _service(request).inject_fault(order_id, body.type)
+@router.post("/demo/fault/{target_id}")
+def demo_fault(target_id: str, body: FaultBody, request: Request):
+    _service(request).inject_fault(target_id, body.type)
     return {"ok": True}
 
 

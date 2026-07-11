@@ -470,8 +470,11 @@ class MandateLoopService:
         self.store.save()
         return intent
 
-    def inject_fault(self, order_id: str, type_: str) -> None:
-        purchase = next(p for p in self.store.purchases.values() if p.order and p.order["id"] == order_id)
+    def inject_fault(self, target_id: str, type_: str) -> None:
+        purchase = self.store.purchases.get(target_id)
+        if purchase is None:
+            purchase = next(p for p in self.store.purchases.values()
+                            if p.order and p.order["id"] == target_id)
         if type_ == "decline_payment":
             if not purchase.payment:
                 raise ValueError("Select BLIK before arming a payment decline.")

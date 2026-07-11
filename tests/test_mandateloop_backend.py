@@ -87,6 +87,22 @@ def test_webauthn_mode_requests_platform_registration(tmp_path: Path, monkeypatc
     assert registration["options"]["authenticatorSelection"]["authenticatorAttachment"] == "platform"
 
 
+def test_decline_fault_can_be_armed_before_order_exists(tmp_path: Path):
+    service = MandateLoopService(tmp_path)
+    intent = service.draft_intent("Kup monitor USB-C do 1200 zł")
+    _sign(service, intent.id, "intent")
+    purchase = service.request_purchase(intent.id, "MON-27-USBC", 1, "webapp")
+    _sign(service, purchase.id, "cart")
+    service.select_rail(purchase.id, "blik_lite", "http://localhost:8000")
+    assert purchase.order is None
+    service.inject_fault(purchase.id, "decline_payment")
+    service.confirm_blik_in_chat(purchase.id, "482913")
+    assert purchase.order_status == "payment_failed"
+    service.retry_payment(purchase.id, "http://localhost:8000")
+    service.confirm_blik_in_chat(purchase.id, "482913")
+    assert purchase.order_status == "paid"
+
+
 def test_streamable_mcp_exact_path_exposes_proposal_only_tools(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MANDATELOOP_STATE", str(tmp_path))
     from fastapi.testclient import TestClient

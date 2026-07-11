@@ -27,6 +27,7 @@ type Props = {
   onReturn: () => Promise<void>
   onEvidence: () => Promise<void>
   onRevoke: () => Promise<void>
+  onFault: (type: 'wrong_item' | 'decline_payment') => Promise<void>
 }
 
 function proposalTotal(purchase: Purchase) {
@@ -111,6 +112,7 @@ export function MobileChat(props: Props) {
           {purchase.status === 'awaiting_human_authorization' ? <button className="mobile-primary" onClick={() => props.onSign(purchase.id, 'cart')}>Zatwierdź ten koszyk</button> : null}
           {purchase.status === 'cart_signed' ? <><div className="verified-line">✓ Cena i produkt podpisane</div><button className="blik-button" onClick={openBlik}><span>BLIK</span> Zapłać w rozmowie</button></> : null}
           {purchase.order_status === 'payment_pending' ? <button className="blik-button" onClick={() => setBlikOpen(true)}><span>BLIK</span> Wpisz kod i potwierdź</button> : null}
+          {props.demo && purchase.order_status === 'payment_pending' ? <button className="mobile-demo" onClick={() => props.onFault('decline_payment')}>Demo · odrzuć pierwszą próbę BLIK</button> : null}
           {purchase.order_status === 'payment_failed' ? <button className="mobile-danger" onClick={retryBlik}>Płatność odrzucona · spróbuj ponownie</button> : null}
         </div>
       </article> : null}
@@ -126,6 +128,7 @@ export function MobileChat(props: Props) {
           {purchase.order_status === 'picked_up' && !purchase.exception ? <><p>Produkt odebrany i zgodny z podpisanym koszykiem. Co robimy?</p><div className="decision-row"><button className="mobile-primary" onClick={props.onKeep}>Zostawiam</button><button className="mobile-secondary" onClick={props.onReturn}>Zwracam</button></div></> : null}
           {purchase.order_status === 'return_requested' ? <p>Zwrot zaakceptowany. Kod nadania: <b>ML-RETURN-482913</b></p> : null}
           {purchase.order_status === 'return_in_transit' ? <p>Zwrot jest w drodze. Po przyjęciu uruchomię refund automatycznie.</p> : null}
+          {props.demo && ['paid', 'shipped', 'in_paczkomat'].includes(purchase.order_status) ? <button className="mobile-demo" onClick={() => props.onFault('wrong_item')}>Demo · wyślij niezgodny produkt</button> : null}
           {props.demo && canAdvance ? <button className="mobile-demo" onClick={props.onAdvance}>Demo · następny etap →</button> : null}
         </div>
       </article> : null}
