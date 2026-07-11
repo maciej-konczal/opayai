@@ -69,3 +69,31 @@ def test_unknown_requirement_fails_closed():
     dec = evaluate_policy(im, cart, {o.id: o for o in offers})
     assert dec.result == "REJECT"
     assert any(c.rule == "hard_requirement:compt:macbook" and not c.passed for c in dec.checks)
+
+
+def _intent_stepup(threshold):
+    reset_ids()
+    return create_intent_mandate(
+        "u_1",
+        Constraint(max_total=Money(amount=Decimal("300")), category="monitor", hard_requirements=[]),
+        SpendingLimit(per_transaction=Money(amount=Decimal("400")),
+                      per_period=Money(amount=Decimal("1000")),
+                      step_up_threshold=Money(amount=Decimal(threshold))),
+        now=datetime(2026, 7, 11, 9, 0, 0))
+
+
+def test_step_up_required_over_threshold_even_when_within_limits():
+    im = _intent_stepup("250")
+    offers = [_offer(price="289")]
+    cart = propose_cart(im, offers, "x402", "fits", now=datetime(2026, 7, 11, 9, 1))
+    dec = evaluate_policy(im, cart, {o.id: o for o in offers})
+    assert dec.result == "AUTO_APPROVE"   # within spending limits
+    assert dec.step_up_required is True    # but over the step-up threshold
+
+
+def test_no_step_up_under_threshold():
+    im = _intent_stepup("500")
+    offers = [_offer(price="289")]
+    cart = propose_cart(im, offers, "x402", "fits", now=datetime(2026, 7, 11, 9, 1))
+    dec = evaluate_policy(im, cart, {o.id: o for o in offers})
+    assert dec.step_up_required is False

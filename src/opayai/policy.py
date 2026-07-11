@@ -59,8 +59,18 @@ def evaluate_policy(intent: IntentMandate, cart: CartMandate,
     if result != "REJECT" and not (txn_ok and period_ok):
         result = "ESCALATE"
 
-    dec = PolicyDecision(cart_mandate_id=cart.id, result=result, checks=checks)
+    threshold = intent.spending_limit.step_up_threshold
+    step_up_required = threshold is not None and cart.total.amount >= threshold.amount
+    if threshold is not None:
+        checks.append(PolicyCheck(
+            rule="step_up", passed=True,
+            detail=(f"{cart.total.amount} >= {threshold.amount}: passkey required"
+                    if step_up_required else f"{cart.total.amount} < {threshold.amount}: no step-up")))
+
+    dec = PolicyDecision(cart_mandate_id=cart.id, result=result, checks=checks,
+                         step_up_required=step_up_required)
     bus.publish("policy.evaluated", "policy",
-                {"result": result, "checks": [c.model_dump() for c in checks]},
+                {"result": result, "step_up_required": step_up_required,
+                 "checks": [c.model_dump() for c in checks]},
                 mandate_ref=intent.id)
     return dec

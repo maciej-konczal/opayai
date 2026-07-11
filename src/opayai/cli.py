@@ -35,7 +35,8 @@ def _render(event) -> None:
 
 
 def run_flow(prompt: str, approve: Callable[[dict, dict], bool],
-             do_return: bool = False, client=None) -> dict:
+             do_return: bool = False, client=None,
+             step_up_threshold: str | None = None) -> dict:
     persona = load_persona()
     constraint, limit = parse_prompt(prompt, persona, client=client)
     intent = server.create_intent_mandate(
@@ -43,7 +44,8 @@ def run_flow(prompt: str, approve: Callable[[dict, dict], bool],
         max_total=str(constraint.max_total.amount),
         hard_requirements=constraint.hard_requirements,
         per_transaction=str(limit.per_transaction.amount),
-        per_period=str(limit.per_period.amount))
+        per_period=str(limit.per_period.amount),
+        step_up_threshold=step_up_threshold)
     offers = server.search_offers(category=constraint.category,
                                   max_price=str(constraint.max_total.amount))
     picked = auto_pick(offers, constraint)
@@ -58,6 +60,12 @@ def run_flow(prompt: str, approve: Callable[[dict, dict], bool],
         approved = approve(cart, decision)
         server.request_approval(cart_id=cart["id"], approved=approved)
         if not approved:
+            return {"intent": intent, "cart": cart, "decision": decision, "order": None}
+    if decision.get("step_up_required"):
+        console.print(f"[yellow]STEP-UP[/yellow] over threshold - authorizing with passkey "
+                      f"(total {cart['total']['amount']})")
+        auth = server.authorize_step_up(cart_id=cart["id"])
+        if not auth.get("authorized"):
             return {"intent": intent, "cart": cart, "decision": decision, "order": None}
     order = server.execute_payment(cart_id=cart["id"])
     receipt_ref = order["receipt"]["rail_reference"]
@@ -86,7 +94,9 @@ def _maybe_client():
 def main(prompt: str = typer.Argument(
         "Find me the best monitor under $300 that works with my MacBook, "
         "arrives tomorrow, and has good return terms. Buy it if you're confident."),
-        do_return: bool = typer.Option(False, "--return")) -> None:
+        do_return: bool = typer.Option(False, "--return"),
+        step_up: str = typer.Option(None, "--step-up",
+            help="Require a passkey for carts at/above this amount, e.g. --step-up 250")) -> None:
     def approve(cart: dict, decision: dict) -> bool:
         console.print(f"[yellow]APPROVAL NEEDED[/yellow] total={cart['total']['amount']} "
                       f"rail={cart['selected_rail']}")
@@ -94,7 +104,8 @@ def main(prompt: str = typer.Argument(
     client = _maybe_client()
     console.print(f"[dim]front door: {'Claude' if client else 'offline heuristic'}[/dim]")
     bus.subscribe(_render)
-    result = run_flow(prompt, approve=approve, do_return=do_return, client=client)
+    result = run_flow(prompt, approve=approve, do_return=do_return, client=client,
+                      step_up_threshold=step_up)
     console.rule("[bold green]RESULT")
     if result["order"]:
         console.print(f"Order [bold]{result['order']['id']}[/bold] "
