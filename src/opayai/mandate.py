@@ -1,5 +1,5 @@
 from __future__ import annotations
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from opayai.types import (IntentMandate, CartMandate, CartItem, Constraint,
                           SpendingLimit, Money, Offer)
@@ -21,7 +21,7 @@ def _next(prefix: str) -> str:
 def create_intent_mandate(user_id: str, constraint: Constraint,
                           spending_limit: SpendingLimit, ttl_hours: int = 24,
                           now: datetime | None = None) -> IntentMandate:
-    now = now or datetime.utcnow()
+    now = now or datetime.now(timezone.utc)
     im = IntentMandate(
         id=_next("im"), user_id=user_id, created_at=now,
         expires_at=now + timedelta(hours=ttl_hours), human_present=False,
@@ -35,7 +35,7 @@ def create_intent_mandate(user_id: str, constraint: Constraint,
 
 def propose_cart(intent: IntentMandate, offers: list[Offer], rail: str,
                  rationale: str, now: datetime | None = None) -> CartMandate:
-    now = now or datetime.utcnow()
+    now = now or datetime.now(timezone.utc)
     items = [CartItem(offer_id=o.id, title=o.title, qty=1, unit_price=o.price)
              for o in offers]
     total = Money(amount=sum((o.price.amount for o in offers), Decimal("0")),

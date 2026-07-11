@@ -17,7 +17,7 @@ SESSION: dict = {}
 def reset_session() -> None:
     SESSION.clear()
     SESSION.update({"intents": {}, "carts": {}, "offers": {}, "decisions": {},
-                    "approved": set(), "period_spent": Decimal("0")})
+                    "approved": set(), "paid": {}, "period_spent": Decimal("0")})
     mandate_mod.reset_ids()
     rails_mod.reset_rail_ids()
 
@@ -78,6 +78,8 @@ def request_approval(cart_id: str, approved: bool) -> dict:
 @app.tool()
 def execute_payment(cart_id: str) -> dict:
     cart = SESSION["carts"][cart_id]
+    if cart_id in SESSION["paid"]:
+        raise ValueError("cart already paid")
     dec = SESSION["decisions"].get(cart_id)
     if dec is None:
         raise ValueError("evaluate_policy must run before payment")
@@ -87,6 +89,7 @@ def execute_payment(cart_id: str) -> dict:
         raise ValueError("cart requires user approval before payment")
     receipt = rails_mod.get_rail(cart.selected_rail).charge(cart)
     order = order_store.create(cart, receipt)
+    SESSION["paid"][cart_id] = order.id
     SESSION["period_spent"] += cart.total.amount
     return order.model_dump(mode="json")
 

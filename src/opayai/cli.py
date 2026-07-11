@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 from decimal import Decimal
 from typing import Callable
 import typer
@@ -68,6 +69,20 @@ def run_flow(prompt: str, approve: Callable[[dict, dict], bool],
             "order": order, "receipt_reference": receipt_ref}
 
 
+def _maybe_client():
+    """Return an Anthropic client if a key is set and the SDK is importable, else None.
+
+    Guarded so the demo always works offline via the heuristic front door.
+    """
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return None
+    try:
+        import anthropic
+        return anthropic.Anthropic()
+    except Exception:
+        return None
+
+
 def main(prompt: str = typer.Argument(
         "Find me the best monitor under $300 that works with my MacBook, "
         "arrives tomorrow, and has good return terms. Buy it if you're confident."),
@@ -76,8 +91,10 @@ def main(prompt: str = typer.Argument(
         console.print(f"[yellow]APPROVAL NEEDED[/yellow] total={cart['total']['amount']} "
                       f"rail={cart['selected_rail']}")
         return typer.confirm("Approve this purchase?")
+    client = _maybe_client()
+    console.print(f"[dim]front door: {'Claude' if client else 'offline heuristic'}[/dim]")
     bus.subscribe(_render)
-    result = run_flow(prompt, approve=approve, do_return=do_return, client=None)
+    result = run_flow(prompt, approve=approve, do_return=do_return, client=client)
     console.rule("[bold green]RESULT")
     if result["order"]:
         console.print(f"Order [bold]{result['order']['id']}[/bold] "

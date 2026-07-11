@@ -59,3 +59,13 @@ def test_escalate_when_period_limit_exceeded():
     dec = evaluate_policy(im, cart, {o.id: o for o in offers}, period_spent=Decimal("50"))
     assert dec.result == "ESCALATE"
     assert any(c.rule == "spending_limit:per_period" and not c.passed for c in dec.checks)
+
+
+def test_unknown_requirement_fails_closed():
+    # A typo'd or hallucinated hard requirement must REJECT, not silently pass.
+    im = _intent(reqs=("compt:macbook",))
+    offers = [_offer()]
+    cart = propose_cart(im, offers, "x402", "fits", now=datetime(2026, 7, 11, 9, 1))
+    dec = evaluate_policy(im, cart, {o.id: o for o in offers})
+    assert dec.result == "REJECT"
+    assert any(c.rule == "hard_requirement:compt:macbook" and not c.passed for c in dec.checks)

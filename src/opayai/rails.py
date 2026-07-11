@@ -1,5 +1,5 @@
 from __future__ import annotations
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Protocol
 from opayai.types import CartMandate, Receipt
 from opayai.events import bus
@@ -25,7 +25,7 @@ class _BaseRail:
     name = "base"
 
     def charge(self, cart: CartMandate, now: datetime | None = None) -> Receipt:
-        now = now or datetime.utcnow()
+        now = now or datetime.now(timezone.utc)
         rec = Receipt(id=_ref("rcpt"), cart_mandate_id=cart.id, rail=self.name,
                       amount=cart.total, paid_at=now, rail_reference=_ref(self.name))
         bus.publish("payment.settled", "rail",

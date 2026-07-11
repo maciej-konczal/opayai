@@ -20,7 +20,8 @@ def _check_hard_requirement(req: str, offers: list[Offer]) -> PolicyCheck:
         ok = all(o.delivery_est_date <= deadline for o in offers)
         return PolicyCheck(rule=f"hard_requirement:{req}", passed=ok,
                            detail=f"delivery by {deadline}: {'ok' if ok else 'too late'}")
-    return PolicyCheck(rule=f"hard_requirement:{req}", passed=True, detail="unknown requirement, skipped")
+    return PolicyCheck(rule=f"hard_requirement:{req}", passed=False,
+                       detail="unknown requirement, rejected (fail-closed)")
 
 
 def evaluate_policy(intent: IntentMandate, cart: CartMandate,
