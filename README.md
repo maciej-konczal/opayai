@@ -199,6 +199,24 @@ out to every enabled **channel** (`src/opayai/channels.py`):
 The agent can also pull the feed with the `get_notifications` tool, and the web order
 page shows a Notifications inbox. Same notification, many channels.
 
+**Simulate the webhook locally** (no external service). Terminal 1 runs a receiver
+that prints whatever is POSTed; terminal 2 drives a flow that needs action:
+
+```bash
+# terminal 1 - the local webhook receiver (stands in for Boski's push endpoint)
+./.venv/bin/python -m opayai.webhook_sink        # -> http://127.0.0.1:9099
+
+# terminal 2 - drive a step-up flow, pointing pings at the receiver
+OPAYAI_NOTIFY=0 OPAYAI_WEBHOOK_URL=http://127.0.0.1:9099 \
+  ./.venv/bin/python -m opayai.cli --step-up 250
+```
+
+Terminal 1 prints, e.g.:
+`[12:38:26] ACTION  Confirm with your passkey - A purchase is over your step-up threshold ...`
+
+For the Cursor demo, put `OPAYAI_WEBHOOK_URL` in `.cursor/mcp.json`'s `env` block
+and reload the server; the MCP server POSTs to the same receiver.
+
 ## Project layout
 
 ```
