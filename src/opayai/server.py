@@ -28,7 +28,11 @@ _INSTRUCTIONS = """opayai is an agent-commerce backbone. Default flow:
 4. Tell the user about any action-needed step (choose / approve / passkey) and surface
    the status_url returned by execute_payment/get_order so they can track the order.
 5. Do NOT call advance_order - fulfillment (shipped, then delivered) happens on its own
-   in the background, and the user is notified proactively. Just hand over the status_url."""
+   in the background, and the user is notified proactively. Just hand over the status_url.
+6. VOICE: if you are speaking, say the choose and authorize moments out loud - present
+   the ranked options and wait for the user to pick, and when execute_payment returns a
+   PENDING status tell them out loud that it needs their approval/passkey and to authorize
+   at the returned authorize_url, then call execute_payment again. Keep spoken replies short."""
 
 app = FastMCP("opayai-mcp", instructions=_INSTRUCTIONS)
 
@@ -357,7 +361,17 @@ def run() -> None:
     _install_event_logging()
     channels.install(bus)   # webhook = full event feed; desktop/email = action pings
     fulfillment.start()     # orders ship/deliver on a timer -> proactive notifications
-    app.run()
+    if os.environ.get("OPAYAI_TRANSPORT", "stdio") == "http":
+        import uvicorn
+        host = "0.0.0.0"
+        port = int(os.environ.get("OPAYAI_MCP_PORT", "8787"))
+        app.settings.host = host
+        app.settings.port = port
+        print(f"[opayai] serving MCP over streamable-http at http://{host}:{port}"
+              f"{app.settings.streamable_http_path}", file=sys.stderr, flush=True)
+        uvicorn.run(_http_asgi_app(), host=host, port=port, log_level="info")
+    else:
+        app.run()
 
 
 if __name__ == "__main__":
