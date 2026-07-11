@@ -320,6 +320,39 @@ def _install_event_logging() -> None:
     bus.subscribe(_sink)
 
 
+def _bearer_auth_asgi(inner_app, token: str | None):
+    """Wrap an ASGI app to require `Authorization: Bearer <token>` on HTTP requests.
+
+    When `token` is falsy, returns `inner_app` unchanged (no auth). Non-HTTP
+    scopes (lifespan, websocket) always pass through so the app's session-manager
+    lifespan still runs.
+    """
+    if not token:
+        return inner_app
+
+    expected = f"Bearer {token}".encode()
+
+    async def _app(scope, receive, send):
+        if scope["type"] == "http":
+            headers = dict(scope.get("headers") or [])
+            if headers.get(b"authorization") != expected:
+                await send({
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [(b"content-type", b"text/plain")],
+                })
+                await send({"type": "http.response.body", "body": b"unauthorized"})
+                return
+        await inner_app(scope, receive, send)
+
+    return _app
+
+
+def _http_asgi_app():
+    """Streamable-HTTP ASGI app for the MCP server, behind optional bearer auth."""
+    return _bearer_auth_asgi(app.streamable_http_app(), os.environ.get("OPAYAI_MCP_TOKEN"))
+
+
 def run() -> None:
     _install_event_logging()
     channels.install(bus)   # webhook = full event feed; desktop/email = action pings
