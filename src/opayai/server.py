@@ -99,7 +99,7 @@ def propose_cart(intent_id: str, offer_ids: list[str], rail: str, rationale: str
     """Build and sign a Cart Mandate: the specific offers the agent wants to buy.
 
     Call after search_offers, once you have chosen offer_ids that satisfy the
-    intent's hard requirements and budget. `rail` is the payment rail: "x402" or
+    intent's hard requirements and budget. `rail` is the payment rail: "ap2" or
     "card". `rationale` is a short human-readable reason shown to the user. The
     cart MUST be checked with evaluate_policy before execute_payment.
     """

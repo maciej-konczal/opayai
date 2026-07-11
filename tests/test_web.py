@@ -4,9 +4,9 @@ EVENTS = [
     {"seq": 1, "type": "intent.created", "actor": "user", "mandate_ref": "im_1",
      "payload": {"id": "im_1", "max_total": "300", "category": "monitor"}},
     {"seq": 2, "type": "cart.proposed", "actor": "agent", "mandate_ref": "im_1",
-     "payload": {"id": "cm_1", "total": "289.00", "rail": "x402"}},
+     "payload": {"id": "cm_1", "total": "289.00", "rail": "ap2"}},
     {"seq": 3, "type": "payment.settled", "actor": "rail", "mandate_ref": "im_1",
-     "payload": {"rail": "x402", "amount": "289.00", "reference": "x402_0002"}},
+     "payload": {"rail": "ap2", "amount": "289.00", "reference": "ap2_0002"}},
     {"seq": 4, "type": "order.created", "actor": "merchant", "mandate_ref": "im_1",
      "payload": {"order_id": "ord_1", "status": "PAID"}},
     {"seq": 5, "type": "order.advanced", "actor": "merchant", "mandate_ref": "im_1",
@@ -26,7 +26,7 @@ def test_order_detail_summarizes_and_keeps_full_trail():
     d = order_detail(EVENTS, "ord_1")
     assert d["summary"]["status"] == "DELIVERED"
     assert d["summary"]["amount"] == "289.00"
-    assert d["summary"]["reference"] == "x402_0002"
+    assert d["summary"]["reference"] == "ap2_0002"
     assert d["summary"]["category"] == "monitor"
     # the whole story is present, not just post-payment
     types = [e["type"] for e in d["trail"]]

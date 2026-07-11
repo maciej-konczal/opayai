@@ -155,8 +155,9 @@ in pane 1 update live as you tell the agent to advance or return the order.
 - **Human-present step-up (passkey).** Carts at/above `step_up_threshold` require a
   fresh, challenge-bound signature from the user's registered device credential
   (passkey) - AP2's human-present path. Payment is refused until it verifies.
-- **Pluggable rails.** `x402` and `card` behind one `PaymentRail` interface. Swapping
-  in real Stripe / x402 is a single class - this is the generality story.
+- **Pluggable rails.** `ap2` (the headline - Google Agent Payments Protocol) and
+  `card` behind one `PaymentRail` interface. Adding another rail (real AP2/PSP,
+  x402, Stripe ACP) is a single class - this is the generality story.
 - **Audit trail = event bus = live view.** One append-only stream: the CLI renders
   it, the web site renders it, and `get_audit_trail` returns it as the receipt of
   exactly what the user agreed to and what happened.

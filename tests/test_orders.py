@@ -8,14 +8,14 @@ def _cart():
     return CartMandate(id="cm_1", intent_mandate_id="im_1",
                        items=[CartItem(offer_id="of_1", title="Mon", qty=1,
                                        unit_price=Money(amount=Decimal("289")))],
-                       total=Money(amount=Decimal("289")), selected_rail="x402",
+                       total=Money(amount=Decimal("289")), selected_rail="ap2",
                        rationale="fits", created_at=datetime(2026, 7, 11, 9, 1), signature="s")
 
 
 def _receipt():
-    return Receipt(id="rcpt_1", cart_mandate_id="cm_1", rail="x402",
+    return Receipt(id="rcpt_1", cart_mandate_id="cm_1", rail="ap2",
                    amount=Money(amount=Decimal("289")), paid_at=datetime(2026, 7, 11, 9, 2),
-                   rail_reference="x402_0001")
+                   rail_reference="ap2_0001")
 
 
 def test_create_is_paid_and_advances():

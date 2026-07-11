@@ -23,13 +23,13 @@ def test_clean_auto_approve_is_not_a_ping():
 
 def test_progress_updates_are_not_actions():
     assert notification_for({"type": "payment.settled",
-                             "payload": {"amount": "289.00", "rail": "x402"}})["needs_action"] is False
+                             "payload": {"amount": "289.00", "rail": "ap2"}})["needs_action"] is False
     assert notification_for({"type": "order.advanced",
                              "payload": {"status": "SHIPPED"}})["needs_action"] is False
 
 
 def test_notifications_filters_by_mandate():
-    events = [{"type": "payment.settled", "payload": {"amount": "1", "rail": "x402"}, "mandate_ref": "im_1"},
+    events = [{"type": "payment.settled", "payload": {"amount": "1", "rail": "ap2"}, "mandate_ref": "im_1"},
               {"type": "order.advanced", "payload": {"status": "SHIPPED"}, "mandate_ref": "im_2"}]
     out = notifications(events, mandate_ref="im_1")
     assert len(out) == 1 and out[0]["source_event"] == "payment.settled"

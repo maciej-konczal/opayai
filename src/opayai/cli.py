@@ -42,7 +42,7 @@ def run_flow(prompt: str, approve: Callable[[dict, dict], bool],
     if not picked:
         return {"intent": intent, "cart": None, "decision": None, "order": None}
     cart = server.propose_cart(intent_id=intent["id"], offer_ids=picked,
-                               rail="x402", rationale="best rated within constraints")
+                               rail="ap2", rationale="best rated within constraints")
     decision = server.evaluate_policy(cart_id=cart["id"])
     if decision["result"] == "REJECT":
         return {"intent": intent, "cart": cart, "decision": decision, "order": None}

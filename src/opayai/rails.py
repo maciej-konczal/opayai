@@ -34,15 +34,15 @@ class _BaseRail:
         return rec
 
 
-class MockX402Rail(_BaseRail):
-    name = "x402"
+class MockAP2Rail(_BaseRail):
+    name = "ap2"
 
 
 class MockCardRail(_BaseRail):
     name = "card"
 
 
-_REGISTRY: dict[str, PaymentRail] = {"x402": MockX402Rail(), "card": MockCardRail()}
+_REGISTRY: dict[str, PaymentRail] = {"ap2": MockAP2Rail(), "card": MockCardRail()}
 
 
 def get_rail(name: str) -> PaymentRail:
