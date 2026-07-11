@@ -293,7 +293,7 @@ class MandateLoopService:
         self.store.save()
         return {"payment": payment.model_dump(mode="json"), "pay_url": f"{base_url}/pay/blik/{session.id}"}
 
-    def blik_decision(self, session_id: str, decision: str) -> Purchase:
+    def blik_decision(self, session_id: str, decision: str, channel: str = "phone_page") -> Purchase:
         rail = self.rails["blik_lite"]
         session = rail.decide(session_id, decision)
         purchase = next(p for p in self.store.purchases.values() if p.payment and p.payment.rail_ref == session_id)
@@ -301,12 +301,13 @@ class MandateLoopService:
         payment = purchase.payment
         if session.status == "confirmed":
             payment.status = "succeeded"
-            payment.attempts.append({"ts": now_iso(), "result": "confirmed", "detail": "BLIK confirmation on phone"})
+            payment.attempts.append({"ts": now_iso(), "result": "confirmed", "detail": f"BLIK confirmation via {channel}"})
             purchase.status, purchase.order_status = "tracking", "paid"
             purchase.order = {"id": self.store.next_id("ord"), "status": "paid", "line_items_shipped": [item.model_dump() for item in purchase.cart.line_items]}
             intent = self.store.intents[purchase.intent_id]
             intent.spent_total += payment.amount
-            self._event("rail", "payment_confirmed", purchase.id, payment_id=payment.id, session_id=session_id)
+            self._event("rail", "payment_confirmed", purchase.id, payment_id=payment.id,
+                        session_id=session_id, channel=channel)
             self._event("merchant", "status_change", purchase.id, order_status="paid")
             self._event("merchant", "notification", purchase.id, message="Płatność BLIK potwierdzona. Zamówienie przyjęte.")
         else:
@@ -317,6 +318,18 @@ class MandateLoopService:
             self._event("system", "notification", purchase.id, message="Płatność odrzucona — spróbować ponownie?")
         self.store.save()
         return purchase
+
+    def confirm_blik_in_chat(self, purchase_id: str, code: str) -> Purchase:
+        if len(code) != 6 or not code.isdigit():
+            raise ValueError("BLIK code must contain exactly six digits.")
+        purchase = self.store.purchases[purchase_id]
+        if not purchase.payment or purchase.payment.status != "pending":
+            raise PolicyBlock("payment_not_pending", "There is no pending BLIK session to confirm.")
+        if purchase.payment.rail != "blik_lite":
+            raise PolicyBlock("rail_not_allowed", "Only BLIK Lite supports an in-chat code prompt.")
+        self._event("user", "blik_code_entered", purchase.id,
+                    session_id=purchase.payment.rail_ref, code_hint=f"••••{code[-2:]}")
+        return self.blik_decision(purchase.payment.rail_ref, "confirm", channel="in_chat_prompt")
 
     def retry_payment(self, purchase_id: str, base_url: str) -> dict[str, Any]:
         purchase = self.store.purchases[purchase_id]

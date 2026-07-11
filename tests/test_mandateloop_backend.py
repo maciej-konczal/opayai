@@ -19,8 +19,9 @@ def test_human_signing_blik_and_evidence(tmp_path: Path):
     purchase = service.request_purchase(intent.id, listed["offers"][0]["sku"], 1, "webapp")
     _sign(service, purchase.id, "cart")
     payment = service.select_rail(purchase.id, "blik_lite", "http://localhost:8000")
-    service.blik_decision(payment["payment"]["rail_ref"], "confirm")
+    service.confirm_blik_in_chat(purchase.id, "482913")
     assert service.store.purchases[purchase.id].order_status == "paid"
+    assert service.store.purchases[purchase.id].payment.attempts[-1]["detail"].endswith("in_chat_prompt")
     evidence = service.evidence(purchase.id)
     assert evidence.hash_chain_valid is True
     assert evidence.cart_mandate and evidence.cart_mandate.signing and evidence.cart_mandate.signing.verified

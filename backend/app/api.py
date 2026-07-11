@@ -5,7 +5,7 @@ import json
 from typing import Any, Literal
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from .models import Constraints
@@ -49,6 +49,10 @@ class RegistrationVerifyRequest(BaseModel):
 
 class RailBody(BaseModel):
     rail: Literal["blik_lite", "card_spt_stub", "usdc_stub"]
+
+
+class BlikCodeBody(BaseModel):
+    code: str = Field(pattern=r"^\d{6}$")
 
 
 class ReasonBody(BaseModel):
@@ -131,6 +135,12 @@ def select_rail(purchase_id: str, body: RailBody, request: Request):
 @router.post("/purchases/{purchase_id}/retry-payment")
 def retry_payment(purchase_id: str, request: Request):
     return _service(request).retry_payment(purchase_id, str(request.base_url).rstrip("/"))
+
+
+@router.post("/purchases/{purchase_id}/confirm-blik")
+def confirm_blik_in_chat(purchase_id: str, body: BlikCodeBody, request: Request):
+    """Human-surface BLIK entry; intentionally absent from the MCP tool set."""
+    return _service(request).confirm_blik_in_chat(purchase_id, body.code).model_dump(mode="json")
 
 
 @router.post("/purchases/{purchase_id}/initiate-return")

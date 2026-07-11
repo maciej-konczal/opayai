@@ -27,3 +27,11 @@ whole assertion, base64-encoded, in the signing record.
 All write routes call the policy proxy. Confirmation additionally requires a
 verified cart signature, unchanged proposal totals, and a succeeded payment.
 Return and refund require a human-signed resolution and the matching order state.
+
+## Human BLIK surface
+
+`POST /api/purchases/{purchase_id}/confirm-blik {code}` is available only on the
+webapp human surface. It accepts a six-digit demo BLIK code, records the in-chat
+human payment interaction, and confirms the already cart-bound BLIK session.
+Agents do not receive this method through MCP. Desktop can still open or QR-link
+to `/pay/blik/{session_id}` as an out-of-band fallback.

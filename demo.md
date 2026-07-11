@@ -12,8 +12,9 @@ Run the web app in another terminal:
 cd web && npm install && npm run dev -- --host 0.0.0.0
 ```
 
-Open `http://localhost:5173/?demo=1`. The backend prints its LAN address for
-the BLIK phone-confirmation page.
+Open `http://localhost:5173/?demo=1` in a narrow/mobile viewport. The primary
+demo is one continuous agent conversation; the desktop three-panel evidence
+view remains available for judges who want to inspect internals.
 
 The default `AUTH_MODE=demo_key` is the deterministic fallback. To rehearse
 Touch ID/Windows Hello, start the backend with:
@@ -23,18 +24,21 @@ AUTH_MODE=webauthn WEBAUTHN_ORIGIN=http://localhost:5173 \
   uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Use `localhost` for the laptop webapp. The BLIK sheet contains a real QR code;
-only the payment confirmation page should be opened on the phone.
+Use `localhost` for WebAuthn. On mobile, **Zapłać w rozmowie** opens the BLIK
+code prompt inside the chat; enter any six digits such as `482913` and confirm.
+On desktop, the checkout sheet still exposes a QR/link as a cross-device fallback.
 
 ## A — web purchase
 
 1. Submit: `Kup mi zestaw opon zimowych 205/55 R16 do 1600 zł, min. 14 dni na zwrot.`
 2. Sign the mandate, observe the 7-day and non-refundable alternatives folded
    under the red policy clause chips, then choose Frostline.
-3. Sign the exact cart. Select BLIK, open its phone URL and confirm it.
+3. Sign the exact cart. Tap **Zapłać w rozmowie**, enter `482913`, and confirm
+   the bank-style BLIK prompt without leaving the agent chat.
 4. Use **Demo: następny etap** through shipped, paczkomat and picked up.
    The paczkomat notification shows `WAW117M` and `482913`.
-5. Click **Zostawiam produkt**, then download the evidence bundle.
+5. The agent asks **Zostawiam / Zwracam** in chat. Choose **Zostawiam**, then
+   download the evidence bundle from the close-out message.
 
 ## B — exception and refund
 

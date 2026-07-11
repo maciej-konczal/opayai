@@ -1,8 +1,9 @@
 # MandateLoop
 
 MandateLoop gives any MCP-capable agent safe purchasing capability over a
-mocked Polish store: intent → human passkey approval → BLIK confirmation →
-paczkomat tracking → keep or return → hash-chained evidence bundle.
+mocked Polish store, with a mobile chat as the primary human surface: intent →
+human passkey approval → in-chat BLIK confirmation → paczkomat tracking → keep
+or return → hash-chained evidence bundle.
 
 The agent may propose and track, but it can never consent. The MandateLoop MCP
 server deliberately has no `authorize_payment`, `sign_mandate`,
@@ -32,7 +33,8 @@ flows. MCP clients connect to `http://localhost:8000/mcp`.
 - Stable policy clauses, revocation, and cumulative per-mandate budget checks.
 - Real WebAuthn platform-credential mode plus the reliable Ed25519 `demo_key`
   fallback; both bind approval to `sha256(canonical_json(body))`.
-- BLIK Lite phone confirmation with a real QR code, decline/retry fault,
+- BLIK Lite in-chat code prompt, bank-style human confirmation, optional desktop
+  QR fallback, decline/retry fault,
   paczkomat notification, wrong-item diff, signed return, refund, and evidence.
 - React/Vite UI with chat rail, lifecycle feed, permission slip, revocation,
   approval sheets, evidence download, and `?demo=1` controls.
